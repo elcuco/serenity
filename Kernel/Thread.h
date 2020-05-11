@@ -288,7 +288,7 @@ public:
 
     VirtualAddress thread_specific_data() const { return m_thread_specific_data; }
 
-    u64 sleep(u32 ticks);
+    u64 sleep(u64 ticks);
     u64 sleep_until(u64 wakeup_time);
 
     enum class BlockResult {

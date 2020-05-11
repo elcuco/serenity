@@ -242,7 +242,7 @@ void Thread::relock_process()
     process().big_lock().lock();
 }
 
-u64 Thread::sleep(u32 ticks)
+u64 Thread::sleep(u64 ticks)
 {
     ASSERT(state() == Thread::Running);
     u64 wakeup_time = g_uptime + ticks;
