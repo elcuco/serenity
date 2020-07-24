@@ -35,13 +35,13 @@ namespace Gfx {
 
 class FloatSize {
 public:
-    FloatSize() {}
+    FloatSize() { }
     FloatSize(float w, float h)
         : m_width(w)
         , m_height(h)
     {
     }
-    explicit FloatSize(const Size& other)
+    explicit FloatSize(const IntSize& other)
         : m_width(other.width())
         , m_height(other.height())
     {
@@ -109,6 +109,8 @@ public:
     }
 
     String to_string() const { return String::format("[%gx%g]", m_width, m_height); }
+
+    IntSize to_int_size() const { return IntSize(width(), height()); }
 
 private:
     float m_width { 0 };

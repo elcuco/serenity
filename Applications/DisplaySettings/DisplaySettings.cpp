@@ -125,6 +125,11 @@ void DisplaySettingsWidget::create_frame()
     m_wallpaper_combo->set_model(*ItemListModel<AK::String>::create(m_wallpapers));
     m_wallpaper_combo->on_change = [this](auto& text, const GUI::ModelIndex& index) {
         String path = text;
+        if (m_monitor_widget->set_wallpaper(path)) {
+            m_monitor_widget->update();
+            return;
+        }
+
         if (index.row() == 0) {
             path = "";
         } else {
@@ -136,8 +141,8 @@ void DisplaySettingsWidget::create_frame()
             }
         }
 
-        this->m_monitor_widget->set_wallpaper(path);
-        this->m_monitor_widget->update();
+        m_monitor_widget->set_wallpaper(path);
+        m_monitor_widget->update();
     };
 
     auto& button = wallpaper_selection_container.add<GUI::Button>();
@@ -146,8 +151,8 @@ void DisplaySettingsWidget::create_frame()
     button.set_button_style(Gfx::ButtonStyle::CoolBar);
     button.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     button.set_preferred_size(22, 22);
-    button.on_click = [this]() {
-        Optional<String> open_path = GUI::FilePicker::get_open_filepath("Select wallpaper from file system.");
+    button.on_click = [this](auto) {
+        Optional<String> open_path = GUI::FilePicker::get_open_filepath(root_widget()->window(), "Select wallpaper from file system.");
 
         if (!open_path.has_value())
             return;
@@ -181,7 +186,7 @@ void DisplaySettingsWidget::create_frame()
         this->m_monitor_widget->update();
     };
 
-    /// Resulation Row ////////////////////////////////////////////////////////////////////////////
+    /// Resolution Row ////////////////////////////////////////////////////////////////////////////
 
     auto& resolution_selection_container = settings_content.add<GUI::Widget>();
     resolution_selection_container.set_layout<GUI::HorizontalBoxLayout>();
@@ -198,7 +203,7 @@ void DisplaySettingsWidget::create_frame()
     m_resolution_combo->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     m_resolution_combo->set_preferred_size(0, 22);
     m_resolution_combo->set_only_allow_values_from_model(true);
-    m_resolution_combo->set_model(*ItemListModel<Gfx::Size>::create(m_resolutions));
+    m_resolution_combo->set_model(*ItemListModel<Gfx::IntSize>::create(m_resolutions));
     m_resolution_combo->on_change = [this](auto&, const GUI::ModelIndex& index) {
         this->m_monitor_widget->set_desktop_resolution(m_resolutions.at(index.row()));
         this->m_monitor_widget->update();
@@ -240,24 +245,24 @@ void DisplaySettingsWidget::create_frame()
     ok_button.set_text("OK");
     ok_button.set_size_policy(Orientation::Horizontal, GUI::SizePolicy::Fixed);
     ok_button.set_preferred_size(60, 22);
-    ok_button.on_click = [this] {
+    ok_button.on_click = [this](auto) {
         send_settings_to_window_server();
-        GUI::Application::the().quit();
+        GUI::Application::the()->quit();
     };
 
     auto& cancel_button = bottom_widget.add<GUI::Button>();
     cancel_button.set_text("Cancel");
     cancel_button.set_size_policy(Orientation::Horizontal, GUI::SizePolicy::Fixed);
     cancel_button.set_preferred_size(60, 22);
-    cancel_button.on_click = [] {
-        GUI::Application::the().quit();
+    cancel_button.on_click = [](auto) {
+        GUI::Application::the()->quit();
     };
 
     auto& apply_button = bottom_widget.add<GUI::Button>();
     apply_button.set_text("Apply");
     apply_button.set_size_policy(Orientation::Horizontal, GUI::SizePolicy::Fixed);
     apply_button.set_preferred_size(60, 22);
-    apply_button.on_click = [this] {
+    apply_button.on_click = [this](auto) {
         send_settings_to_window_server();
     };
 }
@@ -301,24 +306,14 @@ void DisplaySettingsWidget::load_current_settings()
     }
 
     /// Resolution ////////////////////////////////////////////////////////////////////////////////
-    Gfx::Size find_size;
+    Gfx::IntSize find_size;
 
-    bool okay = false;
     // Let's attempt to find the current resolution and select it!
-    find_size.set_width(ws_config->read_entry("Screen", "Width", "1024").to_int(okay));
-    if (!okay) {
-        fprintf(stderr, "DisplaySettings: failed to convert width to int!");
-        ASSERT_NOT_REACHED();
-    }
-
-    find_size.set_height(ws_config->read_entry("Screen", "Height", "768").to_int(okay));
-    if (!okay) {
-        fprintf(stderr, "DisplaySettings: failed to convert height to int!");
-        ASSERT_NOT_REACHED();
-    }
+    find_size.set_width(ws_config->read_num_entry("Screen", "Width", 1024));
+    find_size.set_height(ws_config->read_num_entry("Screen", "Height", 768));
 
     size_t index = m_resolutions.find_first_index(find_size).value_or(0);
-    Gfx::Size m_current_resolution = m_resolutions.at(index);
+    Gfx::IntSize m_current_resolution = m_resolutions.at(index);
     m_monitor_widget->set_desktop_resolution(m_current_resolution);
     m_resolution_combo->set_selected_index(index);
 
@@ -343,8 +338,8 @@ void DisplaySettingsWidget::send_settings_to_window_server()
 {
     auto result = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::SetResolution>(m_monitor_widget->desktop_resolution());
     if (!result->success()) {
-        GUI::MessageBox::show(String::format("Reverting to resolution %dx%d", result->resolution().width(), result->resolution().height()),
-            "Unable to set resolution", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK);
+        GUI::MessageBox::show(root_widget()->window(), String::format("Reverting to resolution %dx%d", result->resolution().width(), result->resolution().height()),
+            "Unable to set resolution", GUI::MessageBox::Type::Error);
     }
 
     if (!m_monitor_widget->wallpaper().is_empty()) {

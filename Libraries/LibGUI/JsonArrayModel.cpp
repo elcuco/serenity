@@ -42,8 +42,9 @@ void JsonArrayModel::update()
 
     auto json = JsonValue::from_string(file->read_all());
 
-    ASSERT(json.is_array());
-    m_array = json.as_array();
+    ASSERT(json.has_value());
+    ASSERT(json.value().is_array());
+    m_array = json.value().as_array();
 
     did_update();
 }
@@ -91,16 +92,14 @@ bool JsonArrayModel::remove(int row)
     return true;
 }
 
-Model::ColumnMetadata JsonArrayModel::column_metadata(int column) const
-{
-    ASSERT(column < static_cast<int>(m_fields.size()));
-    return { 100, m_fields[column].text_alignment };
-}
-
 Variant JsonArrayModel::data(const ModelIndex& index, Role role) const
 {
     auto& field_spec = m_fields[index.column()];
     auto& object = m_array.at(index.row()).as_object();
+
+    if (role == Model::Role::TextAlignment) {
+        return field_spec.text_alignment;
+    }
 
     if (role == Model::Role::Display) {
         auto& json_field_name = field_spec.json_field_name;

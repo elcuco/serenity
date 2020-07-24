@@ -30,8 +30,8 @@
 
 namespace Web {
 
-LayoutTable::LayoutTable(const Element& element, NonnullRefPtr<StyleProperties> style)
-    : LayoutBlock(&element, move(style))
+LayoutTable::LayoutTable(Document& document, const Element& element, NonnullRefPtr<StyleProperties> style)
+    : LayoutBlock(document, &element, move(style))
 {
 }
 
@@ -39,20 +39,9 @@ LayoutTable::~LayoutTable()
 {
 }
 
-void LayoutTable::layout()
+void LayoutTable::layout(LayoutMode layout_mode)
 {
-
-    LayoutBlock::layout();
-}
-
-LayoutTableRow* LayoutTable::first_row()
-{
-    return first_child_of_type<LayoutTableRow>();
-}
-
-const LayoutTableRow* LayoutTable::first_row() const
-{
-    return first_child_of_type<LayoutTableRow>();
+    LayoutBlock::layout(layout_mode);
 }
 
 }

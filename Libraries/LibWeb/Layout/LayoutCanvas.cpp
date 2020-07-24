@@ -31,8 +31,8 @@
 
 namespace Web {
 
-LayoutCanvas::LayoutCanvas(const HTMLCanvasElement& element, NonnullRefPtr<StyleProperties> style)
-    : LayoutReplaced(element, move(style))
+LayoutCanvas::LayoutCanvas(Document& document, const HTMLCanvasElement& element, NonnullRefPtr<StyleProperties> style)
+    : LayoutReplaced(document, element, move(style))
 {
 }
 
@@ -40,25 +40,30 @@ LayoutCanvas::~LayoutCanvas()
 {
 }
 
-void LayoutCanvas::layout()
+void LayoutCanvas::layout(LayoutMode layout_mode)
 {
-    rect().set_width(node().requested_width());
-    rect().set_height(node().requested_height());
-    LayoutReplaced::layout();
+    set_has_intrinsic_width(true);
+    set_has_intrinsic_height(true);
+    set_intrinsic_width(node().width());
+    set_intrinsic_height(node().height());
+    LayoutReplaced::layout(layout_mode);
 }
 
-void LayoutCanvas::render(RenderingContext& context)
+void LayoutCanvas::paint(PaintContext& context, PaintPhase phase)
 {
     if (!is_visible())
         return;
 
-    // FIXME: This should be done at a different level. Also rect() does not include padding etc!
-    if (!context.viewport_rect().intersects(enclosing_int_rect(rect())))
-        return;
+    LayoutReplaced::paint(context, phase);
 
-    if (node().bitmap())
-        context.painter().draw_scaled_bitmap(enclosing_int_rect(rect()), *node().bitmap(), node().bitmap()->rect());
-    LayoutReplaced::render(context);
+    if (phase == PaintPhase::Foreground) {
+        // FIXME: This should be done at a different level. Also rect() does not include padding etc!
+        if (!context.viewport_rect().intersects(enclosing_int_rect(absolute_rect())))
+            return;
+
+        if (node().bitmap())
+            context.painter().draw_scaled_bitmap(enclosing_int_rect(absolute_rect()), *node().bitmap(), node().bitmap()->rect());
+    }
 }
 
 }

@@ -27,6 +27,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font.h>
 #include <LibGfx/StylePainter.h>
+#include <WindowServer/Compositor.h>
 #include <WindowServer/Event.h>
 #include <WindowServer/Screen.h>
 #include <WindowServer/WindowManager.h>
@@ -56,7 +57,7 @@ void WindowSwitcher::set_visible(bool visible)
     if (m_visible == visible)
         return;
     m_visible = visible;
-    WindowManager::the().recompute_occlusions();
+    Compositor::the().recompute_occlusions();
     if (m_switcher_window)
         m_switcher_window->set_visible(visible);
     if (!m_visible)
@@ -161,10 +162,10 @@ void WindowSwitcher::select_window_at_index(int index)
 void WindowSwitcher::redraw()
 {
     draw();
-    WindowManager::the().invalidate(m_rect);
+    Compositor::the().invalidate(m_rect);
 }
 
-Gfx::Rect WindowSwitcher::item_rect(int index) const
+Gfx::IntRect WindowSwitcher::item_rect(int index) const
 {
     return {
         padding(),
@@ -196,12 +197,12 @@ void WindowSwitcher::draw()
             rect_text_color = palette.threed_shadow2();
         }
         item_rect.shrink(item_padding(), 0);
-        Gfx::Rect thumbnail_rect = { item_rect.location().translated(0, 5), { thumbnail_width(), thumbnail_height() } };
+        Gfx::IntRect thumbnail_rect = { item_rect.location().translated(0, 5), { thumbnail_width(), thumbnail_height() } };
         if (window.backing_store()) {
             painter.draw_scaled_bitmap(thumbnail_rect, *window.backing_store(), window.backing_store()->rect());
             Gfx::StylePainter::paint_frame(painter, thumbnail_rect.inflated(4, 4), palette, Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
         }
-        Gfx::Rect icon_rect = { thumbnail_rect.bottom_right().translated(-window.icon().width(), -window.icon().height()), { window.icon().width(), window.icon().height() } };
+        Gfx::IntRect icon_rect = { thumbnail_rect.bottom_right().translated(-window.icon().width(), -window.icon().height()), { window.icon().width(), window.icon().height() } };
         painter.fill_rect(icon_rect, palette.window());
         painter.blit(icon_rect.location(), window.icon(), window.icon().rect());
         painter.draw_text(item_rect.translated(thumbnail_width() + 12, 0), window.title(), WindowManager::the().window_title_font(), Gfx::TextAlignment::CenterLeft, text_color);
@@ -212,7 +213,7 @@ void WindowSwitcher::draw()
 void WindowSwitcher::refresh()
 {
     auto& wm = WindowManager::the();
-    Window* selected_window = nullptr;
+    const Window* selected_window = nullptr;
     if (m_selected_index > 0 && m_windows[m_selected_index])
         selected_window = m_windows[m_selected_index].ptr();
     if (!selected_window)

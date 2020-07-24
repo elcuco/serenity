@@ -35,13 +35,8 @@
 #include <AK/StringBuilder.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/Notifier.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <stdio.h>
-#include <sys/socket.h>
 #include <pwd.h>
-#include <time.h>
-#include <unistd.h>
+#include <stdio.h>
 
 #define IRC_DEBUG
 
@@ -272,11 +267,10 @@ void IRCClient::handle(const Message& msg)
     }
 #endif
 
-    bool is_numeric;
-    int numeric = msg.command.to_uint(is_numeric);
+    auto numeric = msg.command.to_uint();
 
-    if (is_numeric) {
-        switch (numeric) {
+    if (numeric.has_value()) {
+        switch (numeric.value()) {
         case RPL_WELCOME:
             return handle_rpl_welcome(msg);
         case RPL_WHOISCHANNELS:
@@ -305,15 +299,15 @@ void IRCClient::handle(const Message& msg)
             return handle_rpl_namreply(msg);
         case RPL_ENDOFNAMES:
             return handle_rpl_endofnames(msg);
-	case RPL_BANLIST:
+        case RPL_BANLIST:
             return handle_rpl_banlist(msg);
-	case RPL_ENDOFBANLIST:
+        case RPL_ENDOFBANLIST:
             return handle_rpl_endofbanlist(msg);
-	case ERR_NOSUCHNICK:
+        case ERR_NOSUCHNICK:
             return handle_err_nosuchnick(msg);
-	case ERR_UNKNOWNCOMMAND:
+        case ERR_UNKNOWNCOMMAND:
             return handle_err_unknowncommand(msg);
-	case ERR_NICKNAMEINUSE:
+        case ERR_NICKNAMEINUSE:
             return handle_err_nicknameinuse(msg);
         }
     }
@@ -803,10 +797,9 @@ void IRCClient::handle_rpl_topicwhotime(const Message& msg)
     auto& channel_name = msg.arguments[1];
     auto& nick = msg.arguments[2];
     auto setat = msg.arguments[3];
-    bool ok;
-    time_t setat_time = setat.to_uint(ok);
-    if (ok)
-        setat = Core::DateTime::from_timestamp(setat_time).to_string();
+    auto setat_time = setat.to_uint();
+    if (setat_time.has_value())
+        setat = Core::DateTime::from_timestamp(setat_time.value()).to_string();
     ensure_channel(channel_name).add_message(String::format("*** (set by %s at %s)", nick.characters(), setat.characters()), Color::Blue);
 }
 
@@ -901,7 +894,7 @@ void IRCClient::handle_user_command(const String& input)
             auto channel = parts[1];
             part_channel(channel);
             join_channel(channel);
-	} else {
+        } else {
             auto* window = current_window();
             if (!window || window->type() != IRCWindow::Type::Channel)
                 return;
@@ -915,7 +908,7 @@ void IRCClient::handle_user_command(const String& input)
         if (parts.size() >= 2) {
             auto channel = parts[1];
             send_banlist(channel);
-	} else {
+        } else {
             auto* window = current_window();
             if (!window || window->type() != IRCWindow::Type::Channel)
                 return;
@@ -936,14 +929,14 @@ void IRCClient::handle_user_command(const String& input)
             auto channel = parts[1];
             auto topic = input.view().substring_view_starting_after_substring(channel);
             send_topic(channel, topic);
-	} else {
+        } else {
             auto* window = current_window();
             if (!window || window->type() != IRCWindow::Type::Channel)
                 return;
             auto channel = window->channel().name();
             auto topic = input.view().substring_view_starting_after_substring(parts[0]);
             send_topic(channel, topic);
-	}
+        }
         return;
     }
     if (command == "/KICK") {
@@ -959,7 +952,7 @@ void IRCClient::handle_user_command(const String& input)
             auto nick = parts[2];
             auto reason = input.view().substring_view_starting_after_substring(nick);
             send_kick(channel, nick, reason);
-	} else {
+        } else {
             auto* window = current_window();
             if (!window || window->type() != IRCWindow::Type::Channel)
                 return;
@@ -967,7 +960,7 @@ void IRCClient::handle_user_command(const String& input)
             auto nick = parts[1];
             auto reason = input.view().substring_view_starting_after_substring(nick);
             send_kick(channel, nick, reason);
-	}
+        }
         return;
     }
     if (command == "/LIST") {

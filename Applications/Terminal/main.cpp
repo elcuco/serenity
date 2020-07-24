@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/KeyCode.h>
 #include <LibCore/ArgsParser.h>
 #include <LibGUI/AboutDialog.h>
 #include <LibGUI/Action.h>
@@ -37,6 +36,7 @@
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/RadioButton.h>
 #include <LibGUI/Slider.h>
+#include <LibGUI/SpinBox.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Font.h>
@@ -47,6 +47,7 @@
 #include <fcntl.h>
 #include <pwd.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,12 @@
 static void run_command(int ptm_fd, String command)
 {
     pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        dbg() << "run_command: could not fork to run '" << command << "'";
+        return;
+    }
+
     if (pid == 0) {
         const char* tty_name = ptsname(ptm_fd);
         if (!tty_name) {
@@ -131,7 +138,7 @@ RefPtr<GUI::Window> create_settings_window(TerminalWidget& terminal)
     auto window = GUI::Window::construct();
     window->set_title("Terminal Settings");
     window->set_resizable(false);
-    window->set_rect(50, 50, 200, 140);
+    window->set_rect(50, 50, 200, 185);
     window->set_modal(true);
 
     auto& settings = window->set_main_widget<GUI::Widget>();
@@ -168,12 +175,25 @@ RefPtr<GUI::Window> create_settings_window(TerminalWidget& terminal)
     slider.set_range(0, 255);
     slider.set_value(terminal.opacity());
 
+    auto& spinbox_container = settings.add<GUI::GroupBox>("Scroll Length");
+    spinbox_container.set_layout<GUI::VerticalBoxLayout>();
+    spinbox_container.layout()->set_margins({ 6, 16, 6, 6 });
+    spinbox_container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
+    spinbox_container.set_preferred_size(100, 46);
+
+    auto& spinbox = spinbox_container.add<GUI::SpinBox>();
+    spinbox.set_min(1);
+    spinbox.set_value(terminal.scroll_length());
+    spinbox.on_change = [&terminal](int value) {
+        terminal.set_scroll_length(value);
+    };
+
     return window;
 }
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio tty rpath accept cpath wpath shared_buffer proc exec unix fattr", nullptr) < 0) {
+    if (pledge("stdio tty rpath accept cpath wpath shared_buffer proc exec unix fattr sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -188,7 +208,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio tty rpath accept cpath wpath shared_buffer proc exec unix", nullptr) < 0) {
         perror("pledge");
@@ -230,7 +250,7 @@ int main(int argc, char** argv)
 
     auto& terminal = window->set_main_widget<TerminalWidget>(ptm_fd, true, config);
     terminal.on_command_exit = [&] {
-        app.quit(0);
+        app->quit(0);
     };
     terminal.on_title_change = [&](auto& title) {
         window->set_title(title);
@@ -251,10 +271,9 @@ int main(int argc, char** argv)
 
     auto& app_menu = menubar->add_menu("Terminal");
     app_menu.add_action(GUI::Action::create("Open new terminal", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"), [&](auto&) {
-        if (!fork()) {
-            execl("/bin/Terminal", "Terminal", nullptr);
-            exit(1);
-        }
+        pid_t child;
+        const char* argv[] = { "Terminal", nullptr };
+        posix_spawn(&child, "/bin/Terminal", nullptr, nullptr, const_cast<char**>(argv), environ);
     }));
     app_menu.add_action(GUI::Action::create("Settings...", Gfx::Bitmap::load_from_file("/res/icons/gear16.png"),
         [&](const GUI::Action&) {
@@ -271,12 +290,15 @@ int main(int argc, char** argv)
     app_menu.add_separator();
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         dbgprintf("Terminal: Quit menu activated!\n");
-        GUI::Application::the().quit(0);
+        GUI::Application::the()->quit();
     }));
 
     auto& edit_menu = menubar->add_menu("Edit");
     edit_menu.add_action(terminal.copy_action());
     edit_menu.add_action(terminal.paste_action());
+
+    auto& view_menu = menubar->add_menu("View");
+    view_menu.add_action(terminal.clear_including_history_action());
 
     GUI::ActionGroup font_action_group;
     font_action_group.set_exclusive(true);
@@ -301,7 +323,7 @@ int main(int argc, char** argv)
         GUI::AboutDialog::show("Terminal", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-terminal.png"), window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     if (unveil("/res", "r") < 0) {
         perror("unveil");
@@ -326,5 +348,5 @@ int main(int argc, char** argv)
     unveil(nullptr, nullptr);
 
     config->sync();
-    return app.exec();
+    return app->exec();
 }

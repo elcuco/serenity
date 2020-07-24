@@ -27,7 +27,7 @@
 #include <AK/Assertions.h>
 #include <AK/Atomic.h>
 #include <AK/StdLibExtras.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <limits.h>
 #include <pthread.h>
 #include <serenity.h>
@@ -83,6 +83,7 @@ static int create_thread(void* (*entry)(void*), void* argument, PthreadAttrImpl*
     return syscall(SC_create_thread, pthread_create_helper, thread_params);
 }
 
+[[noreturn]] 	
 static void exit_thread(void* code)
 {
     syscall(SC_exit_thread, code);

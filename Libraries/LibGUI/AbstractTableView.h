@@ -34,7 +34,7 @@ class TableCellPaintingDelegate {
 public:
     virtual ~TableCellPaintingDelegate() {}
 
-    virtual void paint(Painter&, const Gfx::Rect&, const Gfx::Palette&, const Model&, const ModelIndex&) = 0;
+    virtual void paint(Painter&, const Gfx::IntRect&, const Gfx::Palette&, const Model&, const ModelIndex&) = 0;
 };
 
 class AbstractTableView : public AbstractView {
@@ -52,25 +52,25 @@ public:
     bool is_column_hidden(int) const;
     void set_column_hidden(int, bool);
 
-    void set_size_columns_to_fit_content(bool b) { m_size_columns_to_fit_content = b; }
-    bool size_columns_to_fit_content() const { return m_size_columns_to_fit_content; }
-
     void set_cell_painting_delegate(int column, OwnPtr<TableCellPaintingDelegate>&&);
 
     int horizontal_padding() const { return m_horizontal_padding; }
 
-    Gfx::Point adjusted_position(const Gfx::Point&) const;
+    Gfx::IntPoint adjusted_position(const Gfx::IntPoint&) const;
 
-    virtual Gfx::Rect content_rect(const ModelIndex&) const override;
-    Gfx::Rect content_rect(int row, int column) const;
-    Gfx::Rect row_rect(int item_index) const;
+    virtual Gfx::IntRect content_rect(const ModelIndex&) const override;
+    Gfx::IntRect content_rect(int row, int column) const;
+    Gfx::IntRect row_rect(int item_index) const;
 
     void scroll_into_view(const ModelIndex&, Orientation);
 
-    virtual ModelIndex index_at_event_position(const Gfx::Point&, bool& is_toggle) const;
-    virtual ModelIndex index_at_event_position(const Gfx::Point&) const override;
+    virtual ModelIndex index_at_event_position(const Gfx::IntPoint&, bool& is_toggle) const;
+    virtual ModelIndex index_at_event_position(const Gfx::IntPoint&) const override;
 
     virtual void select_all() override;
+
+    void move_selection(int steps);
+
 protected:
     virtual ~AbstractTableView() override;
     AbstractTableView();
@@ -80,14 +80,13 @@ protected:
     virtual void mousedown_event(MouseEvent&) override;
     virtual void mousemove_event(MouseEvent&) override;
     virtual void doubleclick_event(MouseEvent&) override;
-    virtual void keydown_event(KeyEvent&) override;
     virtual void leave_event(Core::Event&) override;
     virtual void context_menu_event(ContextMenuEvent&) override;
 
     virtual void toggle_index(const ModelIndex&) {}
 
     void paint_headers(Painter&);
-    Gfx::Rect header_rect(int column) const;
+    Gfx::IntRect header_rect(int column) const;
 
     static const Gfx::Font& header_font();
     void update_headers();
@@ -107,7 +106,7 @@ protected:
     Menu& ensure_header_context_menu();
     RefPtr<Menu> m_header_context_menu;
 
-    Gfx::Rect column_resize_grabbable_rect(int) const;
+    Gfx::IntRect column_resize_grabbable_rect(int) const;
     int column_width(int) const;
     void update_content_size();
     virtual void update_column_sizes();
@@ -115,11 +114,10 @@ protected:
 
 private:
     bool m_headers_visible { true };
-    bool m_size_columns_to_fit_content { false };
     bool m_in_column_resize { false };
     bool m_alternating_row_colors { true };
     int m_horizontal_padding { 5 };
-    Gfx::Point m_column_resize_origin;
+    Gfx::IntPoint m_column_resize_origin;
     int m_column_resize_original_width { 0 };
     int m_resizing_column { -1 };
     int m_pressed_column_header_index { -1 };

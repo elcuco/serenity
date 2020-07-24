@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/Application.h>
@@ -38,6 +37,7 @@
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/CSS/SelectorEngine.h>
 #include <LibWeb/CSS/StyleResolver.h>
+#include <LibWeb/DOM/AttributeNames.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentType.h>
 #include <LibWeb/DOM/Element.h>
@@ -45,15 +45,16 @@
 #include <LibWeb/DOM/HTMLBodyElement.h>
 #include <LibWeb/DOM/HTMLHeadElement.h>
 #include <LibWeb/DOM/HTMLHtmlElement.h>
+#include <LibWeb/DOM/HTMLScriptElement.h>
 #include <LibWeb/DOM/HTMLTitleElement.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/DOM/Window.h>
 #include <LibWeb/Dump.h>
-#include <LibWeb/Frame.h>
-#include <LibWeb/HtmlView.h>
+#include <LibWeb/Frame/Frame.h>
 #include <LibWeb/Layout/LayoutDocument.h>
 #include <LibWeb/Layout/LayoutTreeBuilder.h>
 #include <LibWeb/Origin.h>
+#include <LibWeb/PageView.h>
 #include <LibWeb/Parser/CSSParser.h>
 #include <stdio.h>
 
@@ -62,9 +63,13 @@ namespace Web {
 Document::Document(const URL& url)
     : ParentNode(*this, NodeType::DOCUMENT_NODE)
     , m_style_resolver(make<StyleResolver>(*this))
+    , m_style_sheets(CSS::StyleSheetList::create(*this))
     , m_url(url)
     , m_window(Window::create_with_document(*this))
 {
+    HTML::AttributeNames::initialize();
+    HTML::TagNames::initialize();
+
     m_style_update_timer = Core::Timer::create_single_shot(0, [this] {
         update_style();
     });
@@ -133,7 +138,7 @@ const HTMLHeadElement* Document::head() const
     return html->first_child_of_type<HTMLHeadElement>();
 }
 
-const HTMLBodyElement* Document::body() const
+const HTMLElement* Document::body() const
 {
     auto* html = document_element();
     if (!html)
@@ -157,11 +162,19 @@ String Document::title() const
 void Document::attach_to_frame(Badge<Frame>, Frame& frame)
 {
     m_frame = frame.make_weak_ptr();
+    for_each_in_subtree([&](auto& node) {
+        node.document_did_attach_to_frame(frame);
+        return IterationDecision::Continue;
+    });
     layout();
 }
 
-void Document::detach_from_frame(Badge<Frame>, Frame&)
+void Document::detach_from_frame(Badge<Frame>, Frame& frame)
 {
+    for_each_in_subtree([&](auto& node) {
+        node.document_will_detach_from_frame(frame);
+        return IterationDecision::Continue;
+    });
     m_layout_root = nullptr;
     m_frame = nullptr;
 }
@@ -177,7 +190,7 @@ Color Document::background_color(const Palette& palette) const
     if (!body_layout_node)
         return default_color;
 
-    auto background_color = body_layout_node->style().property(CSS::PropertyID::BackgroundColor);
+    auto background_color = body_layout_node->specified_style().property(CSS::PropertyID::BackgroundColor);
     if (!background_color.has_value() || !background_color.value()->is_color())
         return default_color;
 
@@ -194,7 +207,7 @@ RefPtr<Gfx::Bitmap> Document::background_image() const
     if (!body_layout_node)
         return {};
 
-    auto background_image = body_layout_node->style().property(CSS::PropertyID::BackgroundImage);
+    auto background_image = body_layout_node->specified_style().property(CSS::PropertyID::BackgroundImage);
     if (!background_image.has_value() || !background_image.value()->is_image())
         return {};
 
@@ -232,6 +245,9 @@ void Document::layout()
     }
     m_layout_root->layout();
     m_layout_root->set_needs_display();
+
+    if (frame()->is_main_frame())
+        frame()->page().client().page_did_layout();
 }
 
 void Document::update_style()
@@ -250,11 +266,9 @@ void Document::update_layout()
         return;
 
     layout();
-    if (on_layout_updated)
-        on_layout_updated();
 }
 
-RefPtr<LayoutNode> Document::create_layout_node(const StyleProperties*) const
+RefPtr<LayoutNode> Document::create_layout_node(const StyleProperties*)
 {
     return adopt(*new LayoutDocument(*this, StyleProperties::create()));
 }
@@ -313,16 +327,47 @@ Vector<const Element*> Document::get_elements_by_name(const String& name) const
 {
     Vector<const Element*> elements;
     for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.attribute("name") == name)
+        if (element.attribute(HTML::AttributeNames::name) == name)
             elements.append(&element);
         return IterationDecision::Continue;
     });
     return elements;
 }
 
+NonnullRefPtrVector<Element> Document::get_elements_by_tag_name(const FlyString& tag_name) const
+{
+    NonnullRefPtrVector<Element> elements;
+    for_each_in_subtree_of_type<Element>([&](auto& element) {
+        if (element.local_name() == tag_name)
+            elements.append(element);
+        return IterationDecision::Continue;
+    });
+    return elements;
+}
+
+RefPtr<Element> Document::query_selector(const StringView& selector_text)
+{
+    auto selector = parse_selector(CSS::ParsingContext(*this), selector_text);
+    if (!selector.has_value())
+        return {};
+
+    dump_selector(selector.value());
+
+    RefPtr<Element> result;
+    for_each_in_subtree_of_type<Element>([&](auto& element) {
+        if (SelectorEngine::matches(selector.value(), element)) {
+            result = element;
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+
+    return result;
+}
+
 NonnullRefPtrVector<Element> Document::query_selector_all(const StringView& selector_text)
 {
-    auto selector = parse_selector(selector_text);
+    auto selector = parse_selector(CSS::ParsingContext(*this), selector_text);
     if (!selector.has_value())
         return {};
 
@@ -345,7 +390,7 @@ Color Document::link_color() const
         return m_link_color.value();
     if (!frame())
         return Color::Blue;
-    return frame()->html_view()->palette().link();
+    return frame()->page().palette().link();
 }
 
 Color Document::active_link_color() const
@@ -354,7 +399,7 @@ Color Document::active_link_color() const
         return m_active_link_color.value();
     if (!frame())
         return Color::Red;
-    return frame()->html_view()->palette().active_link();
+    return frame()->page().palette().active_link();
 }
 
 Color Document::visited_link_color() const
@@ -363,7 +408,7 @@ Color Document::visited_link_color() const
         return m_visited_link_color.value();
     if (!frame())
         return Color::Magenta;
-    return frame()->html_view()->palette().visited_link();
+    return frame()->page().palette().visited_link();
 }
 
 JS::Interpreter& Document::interpreter()
@@ -378,11 +423,10 @@ JS::Value Document::run_javascript(const StringView& source)
     auto parser = JS::Parser(JS::Lexer(source));
     auto program = parser.parse_program();
     if (parser.has_errors()) {
+        parser.print_errors();
         return JS::js_undefined();
     }
-    dbg() << "Document::run_javascript('" << source << "') will run:";
-    program->dump(0);
-    return document().interpreter().run(*program);
+    return document().interpreter().run(document().interpreter().global_object(), *program);
 }
 
 NonnullRefPtr<Element> Document::create_element(const String& tag_name)
@@ -393,6 +437,60 @@ NonnullRefPtr<Element> Document::create_element(const String& tag_name)
 NonnullRefPtr<Text> Document::create_text_node(const String& data)
 {
     return adopt(*new Text(*this, data));
+}
+
+void Document::set_pending_parsing_blocking_script(Badge<HTMLScriptElement>, HTMLScriptElement* script)
+{
+    m_pending_parsing_blocking_script = script;
+}
+
+NonnullRefPtr<HTMLScriptElement> Document::take_pending_parsing_blocking_script(Badge<HTMLDocumentParser>)
+{
+    return m_pending_parsing_blocking_script.release_nonnull();
+}
+
+void Document::add_script_to_execute_when_parsing_has_finished(Badge<HTMLScriptElement>, HTMLScriptElement& script)
+{
+    m_scripts_to_execute_when_parsing_has_finished.append(script);
+}
+
+NonnullRefPtrVector<HTMLScriptElement> Document::take_scripts_to_execute_when_parsing_has_finished(Badge<HTMLDocumentParser>)
+{
+    return move(m_scripts_to_execute_when_parsing_has_finished);
+}
+
+void Document::add_script_to_execute_as_soon_as_possible(Badge<HTMLScriptElement>, HTMLScriptElement& script)
+{
+    m_scripts_to_execute_as_soon_as_possible.append(script);
+}
+
+NonnullRefPtrVector<HTMLScriptElement> Document::take_scripts_to_execute_as_soon_as_possible(Badge<HTMLDocumentParser>)
+{
+    return move(m_scripts_to_execute_as_soon_as_possible);
+}
+
+void Document::adopt_node(Node& subtree_root)
+{
+    subtree_root.for_each_in_subtree([&](auto& node) {
+        node.set_document({}, *this);
+        return IterationDecision::Continue;
+    });
+}
+
+const DocumentType* Document::doctype() const
+{
+    return first_child_of_type<DocumentType>();
+}
+
+const String& Document::compat_mode() const
+{
+    static String back_compat = "BackCompat";
+    static String css1_compat = "CSS1Compat";
+
+    if (m_quirks_mode == QuirksMode::Yes)
+        return back_compat;
+
+    return css1_compat;
 }
 
 }

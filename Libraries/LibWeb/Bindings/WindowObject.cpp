@@ -24,14 +24,21 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Base64.h>
+#include <AK/ByteBuffer.h>
 #include <AK/FlyString.h>
 #include <AK/Function.h>
+#include <AK/Utf8View.h>
+#include <AK/String.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/Function.h>
 #include <LibJS/Runtime/Shape.h>
+#include <LibTextCodec/Decoder.h>
 #include <LibWeb/Bindings/DocumentWrapper.h>
+#include <LibWeb/Bindings/LocationObject.h>
 #include <LibWeb/Bindings/NavigatorObject.h>
+#include <LibWeb/Bindings/NodeWrapperFactory.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/Bindings/XMLHttpRequestConstructor.h>
 #include <LibWeb/Bindings/XMLHttpRequestPrototype.h>
@@ -44,26 +51,32 @@ namespace Bindings {
 WindowObject::WindowObject(Window& impl)
     : m_impl(impl)
 {
+    impl.set_wrapper({}, *this);
 }
 
 void WindowObject::initialize()
 {
     GlobalObject::initialize();
 
-    put("window", this, JS::Attribute::Enumerable);
-    put_native_property("document", document_getter, document_setter, JS::Attribute::Enumerable);
-    put_native_function("alert", alert);
-    put_native_function("confirm", confirm);
-    put_native_function("setInterval", set_interval, 1);
-    put_native_function("setTimeout", set_timeout, 1);
-    put_native_function("requestAnimationFrame", request_animation_frame, 1);
-    put_native_function("cancelAnimationFrame", cancel_animation_frame, 1);
+    define_property("window", this, JS::Attribute::Enumerable);
+    define_native_property("document", document_getter, document_setter, JS::Attribute::Enumerable);
+    define_native_function("alert", alert);
+    define_native_function("confirm", confirm);
+    define_native_function("setInterval", set_interval, 1);
+    define_native_function("setTimeout", set_timeout, 1);
+    define_native_function("clearInterval", clear_interval, 1);
+    define_native_function("clearTimeout", clear_timeout, 1);
+    define_native_function("requestAnimationFrame", request_animation_frame, 1);
+    define_native_function("cancelAnimationFrame", cancel_animation_frame, 1);
+    define_native_function("atob", atob, 1);
+    define_native_function("btoa", btoa, 1);
 
-    put("navigator", heap().allocate<NavigatorObject>(), JS::Attribute::Enumerable | JS::Attribute::Configurable);
+    define_property("navigator", heap().allocate<NavigatorObject>(*this, *this), JS::Attribute::Enumerable | JS::Attribute::Configurable);
+    define_property("location", heap().allocate<LocationObject>(*this, *this), JS::Attribute::Enumerable | JS::Attribute::Configurable);
 
-    m_xhr_prototype = heap().allocate<XMLHttpRequestPrototype>();
-    m_xhr_constructor = heap().allocate<XMLHttpRequestConstructor>();
-    m_xhr_constructor->put("prototype", m_xhr_prototype, 0);
+    m_xhr_prototype = heap().allocate<XMLHttpRequestPrototype>(*this, *this);
+    m_xhr_constructor = heap().allocate<XMLHttpRequestConstructor>(*this, *this);
+    m_xhr_constructor->define_property("prototype", m_xhr_prototype, 0);
     add_constructor("XMLHttpRequest", m_xhr_constructor, *m_xhr_prototype);
 }
 
@@ -78,121 +91,209 @@ void WindowObject::visit_children(Visitor& visitor)
     visitor.visit(m_xhr_prototype);
 }
 
-static Window* impl_from(JS::Interpreter& interpreter)
+static Window* impl_from(JS::Interpreter& interpreter, JS::GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object) {
         ASSERT_NOT_REACHED();
         return nullptr;
     }
     if (StringView("WindowObject") != this_object->class_name()) {
-        interpreter.throw_exception<JS::TypeError>("That's not a WindowObject, bro.");
+        interpreter.throw_exception<JS::TypeError>(JS::ErrorType::NotA, "WindowObject");
         return nullptr;
     }
     return &static_cast<WindowObject*>(this_object)->impl();
 }
 
-JS::Value WindowObject::alert(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::alert)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
     String message = "";
-    if (interpreter.argument_count())
-        message = interpreter.argument(0).to_string();
+    if (interpreter.argument_count()) {
+        message = interpreter.argument(0).to_string(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
     impl->alert(message);
     return JS::js_undefined();
 }
 
-JS::Value WindowObject::confirm(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::confirm)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
     String message = "";
-    if (interpreter.argument_count())
-        message = interpreter.argument(0).to_string();
+    if (interpreter.argument_count()) {
+        message = interpreter.argument(0).to_string(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
     return JS::Value(impl->confirm(message));
 }
 
-JS::Value WindowObject::set_interval(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::set_interval)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
-    auto& arguments = interpreter.call_frame().arguments;
-    if (arguments.size() < 2)
-        return {};
-    auto* callback_object = arguments[0].to_object(interpreter.heap());
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "setInterval");
+    auto* callback_object = interpreter.argument(0).to_object(interpreter, global_object);
     if (!callback_object)
         return {};
     if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::TypeError>("Not a function");
-    impl->set_interval(*static_cast<JS::Function*>(callback_object), arguments[1].to_i32());
-    return JS::js_undefined();
-}
-
-JS::Value WindowObject::set_timeout(JS::Interpreter& interpreter)
-{
-    auto* impl = impl_from(interpreter);
-    if (!impl)
-        return {};
-    auto& arguments = interpreter.call_frame().arguments;
-    if (arguments.size() < 1)
-        return {};
-    auto* callback_object = arguments[0].to_object(interpreter.heap());
-    if (!callback_object)
-        return {};
-    if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::TypeError>("Not a function");
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::NotAFunctionNoParam);
 
     i32 interval = 0;
-    if (interpreter.argument_count() >= 2)
-        interval = arguments[1].to_i32();
+    if (interpreter.argument_count() >= 2) {
+        interval = interpreter.argument(1).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
+        if (interval < 0)
+            interval = 0;
+    }
 
-    impl->set_timeout(*static_cast<JS::Function*>(callback_object), interval);
-    return JS::js_undefined();
+    auto timer_id = impl->set_interval(*static_cast<JS::Function*>(callback_object), interval);
+    return JS::Value(timer_id);
 }
 
-JS::Value WindowObject::request_animation_frame(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::set_timeout)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
-    auto& arguments = interpreter.call_frame().arguments;
-    if (arguments.size() < 1)
-        return {};
-    auto* callback_object = arguments[0].to_object(interpreter.heap());
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "setTimeout");
+    auto* callback_object = interpreter.argument(0).to_object(interpreter, global_object);
     if (!callback_object)
         return {};
     if (!callback_object->is_function())
-        return interpreter.throw_exception<JS::TypeError>("Not a function");
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::NotAFunctionNoParam);
+
+    i32 interval = 0;
+    if (interpreter.argument_count() >= 2) {
+        interval = interpreter.argument(1).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
+        if (interval < 0)
+            interval = 0;
+    }
+
+    auto timer_id = impl->set_timeout(*static_cast<JS::Function*>(callback_object), interval);
+    return JS::Value(timer_id);
+}
+
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::clear_timeout)
+{
+    auto* impl = impl_from(interpreter, global_object);
+    if (!impl)
+        return {};
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "clearTimeout");
+    i32 timer_id = interpreter.argument(0).to_i32(interpreter);
+    if (interpreter.exception())
+        return {};
+    impl->clear_timeout(timer_id);
+    return JS::js_undefined();
+}
+
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::clear_interval)
+{
+    auto* impl = impl_from(interpreter, global_object);
+    if (!impl)
+        return {};
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountAtLeastOne, "clearInterval");
+    i32 timer_id = interpreter.argument(0).to_i32(interpreter);
+    if (interpreter.exception())
+        return {};
+    impl->clear_timeout(timer_id);
+    return JS::js_undefined();
+}
+
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::request_animation_frame)
+{
+    auto* impl = impl_from(interpreter, global_object);
+    if (!impl)
+        return {};
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountOne, "requestAnimationFrame");
+    auto* callback_object = interpreter.argument(0).to_object(interpreter, global_object);
+    if (!callback_object)
+        return {};
+    if (!callback_object->is_function())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::NotAFunctionNoParam);
     return JS::Value(impl->request_animation_frame(*static_cast<JS::Function*>(callback_object)));
 }
 
-JS::Value WindowObject::cancel_animation_frame(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::cancel_animation_frame)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
-    auto& arguments = interpreter.call_frame().arguments;
-    if (arguments.size() < 1)
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountOne, "cancelAnimationFrame");
+    auto id = interpreter.argument(0).to_i32(interpreter);
+    if (interpreter.exception())
         return {};
-    impl->cancel_animation_frame(arguments[0].to_i32());
+    impl->cancel_animation_frame(id);
     return JS::js_undefined();
 }
 
-JS::Value WindowObject::document_getter(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::atob)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
-    return wrap(interpreter.heap(), impl->document());
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountOne, "atob");
+    auto string = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    auto decoded = decode_base64(StringView(string));
+
+    // decode_base64() returns a byte string. LibJS uses UTF-8 for strings. Use Latin1Decoder to convert bytes 128-255 to UTF-8.
+    return JS::js_string(interpreter, TextCodec::decoder_for("iso-8859-1")->to_utf8(decoded));
 }
 
-void WindowObject::document_setter(JS::Interpreter&, JS::Value)
+JS_DEFINE_NATIVE_FUNCTION(WindowObject::btoa)
+{
+    auto* impl = impl_from(interpreter, global_object);
+    if (!impl)
+        return {};
+    if (!interpreter.argument_count())
+        return interpreter.throw_exception<JS::TypeError>(JS::ErrorType::BadArgCountOne, "btoa");
+    auto string = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+
+    Vector<u8> byte_string;
+    byte_string.ensure_capacity(string.length());
+    for (u32 codepoint : Utf8View(string)) {
+        if (codepoint > 0xff)
+            return interpreter.throw_exception<JS::InvalidCharacterError>(JS::ErrorType::NotAByteString, "btoa");
+        byte_string.append(codepoint);
+    }
+
+    auto encoded = encode_base64(ByteBuffer::wrap(byte_string.data(), byte_string.size()));
+    return JS::js_string(interpreter, move(encoded));
+}
+
+JS_DEFINE_NATIVE_GETTER(WindowObject::document_getter)
+{
+    auto* impl = impl_from(interpreter, global_object);
+    if (!impl)
+        return {};
+    return wrap(global_object, impl->document());
+}
+
+JS_DEFINE_NATIVE_SETTER(WindowObject::document_setter)
 {
     // FIXME: Figure out what we should do here. Just ignore attempts to set window.document for now.
+    UNUSED_PARAM(value);
 }
 
 }

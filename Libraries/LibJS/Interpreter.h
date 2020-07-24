@@ -30,9 +30,12 @@
 #include <AK/HashMap.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
+#include <AK/Weakable.h>
+#include <LibJS/AST.h>
 #include <LibJS/Console.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Heap.h>
+#include <LibJS/Runtime/ErrorTypes.h>
 #include <LibJS/Runtime/Exception.h>
 #include <LibJS/Runtime/LexicalEnvironment.h>
 #include <LibJS/Runtime/MarkedValueList.h>
@@ -69,43 +72,54 @@ struct Argument {
 
 typedef Vector<Argument, 8> ArgumentVector;
 
-class Interpreter {
+class Interpreter : public Weakable<Interpreter> {
 public:
     template<typename GlobalObjectType, typename... Args>
     static NonnullOwnPtr<Interpreter> create(Args&&... args)
     {
         auto interpreter = adopt_own(*new Interpreter);
-        interpreter->m_global_object = interpreter->heap().allocate<GlobalObjectType>(forward<Args>(args)...);
+        interpreter->m_global_object = interpreter->heap().allocate_without_global_object<GlobalObjectType>(forward<Args>(args)...);
         static_cast<GlobalObjectType*>(interpreter->m_global_object)->initialize();
         return interpreter;
     }
 
     ~Interpreter();
 
-    Value run(const Statement&, ArgumentVector = {}, ScopeType = ScopeType::Block);
+    Value run(GlobalObject&, const Statement&, ArgumentVector = {}, ScopeType = ScopeType::Block);
 
     GlobalObject& global_object();
     const GlobalObject& global_object() const;
 
     Heap& heap() { return m_heap; }
 
-    void unwind(ScopeType type) { m_unwind_until = type; }
+    void unwind(ScopeType type, FlyString label = {})
+    {
+        m_unwind_until = type;
+        m_unwind_until_label = label;
+    }
     void stop_unwind() { m_unwind_until = ScopeType::None; }
-    bool should_unwind_until(ScopeType type) const { return m_unwind_until == type; }
+    bool should_unwind_until(ScopeType type, FlyString label) const
+    {
+        if (m_unwind_until_label.is_null())
+            return m_unwind_until == type;
+        return m_unwind_until == type && m_unwind_until_label == label;
+    }
     bool should_unwind() const { return m_unwind_until != ScopeType::None; }
 
-    Value get_variable(const FlyString& name);
-    void set_variable(const FlyString& name, Value, bool first_assignment = false);
+    Value get_variable(const FlyString& name, GlobalObject&);
+    void set_variable(const FlyString& name, Value, GlobalObject&, bool first_assignment = false);
 
     Reference get_reference(const FlyString& name);
 
+    Symbol* get_global_symbol(const String& description);
+
     void gather_roots(Badge<Heap>, HashTable<Cell*>&);
 
-    void enter_scope(const ScopeNode&, ArgumentVector, ScopeType);
+    void enter_scope(const ScopeNode&, ArgumentVector, ScopeType, GlobalObject&);
     void exit_scope(const ScopeNode&);
 
-    Value call(Function&, Value this_value = {}, Optional<MarkedValueList> arguments = {});
-    Value construct(Function&, Function& new_target, Optional<MarkedValueList> arguments = {});
+    Value call(Function&, Value this_value, Optional<MarkedValueList> arguments = {});
+    Value construct(Function&, Function& new_target, Optional<MarkedValueList> arguments, GlobalObject&);
 
     CallFrame& push_call_frame()
     {
@@ -122,6 +136,17 @@ public:
     const LexicalEnvironment* current_environment() const { return m_call_stack.last().environment; }
     LexicalEnvironment* current_environment() { return m_call_stack.last().environment; }
 
+    bool in_strict_mode() const { return m_scope_stack.last().scope_node->in_strict_mode(); }
+
+    template<typename Callback>
+    void for_each_argument(Callback callback)
+    {
+        if (m_call_stack.is_empty())
+            return;
+        for (auto& value : m_call_stack.last().arguments)
+            callback(value);
+    }
+
     size_t argument_count() const
     {
         if (m_call_stack.is_empty())
@@ -137,10 +162,10 @@ public:
         return index < arguments.size() ? arguments[index] : js_undefined();
     }
 
-    Value this_value() const
+    Value this_value(Object& global_object) const
     {
         if (m_call_stack.is_empty())
-            return m_global_object;
+            return &global_object;
         return m_call_stack.last().this_value;
     }
 
@@ -159,16 +184,33 @@ public:
     Value throw_exception(Exception*);
     Value throw_exception(Value value)
     {
-        return throw_exception(heap().allocate<Exception>(value));
+        return throw_exception(heap().allocate<Exception>(global_object(), value));
+    }
+
+    template<typename T, typename... Args>
+    Value throw_exception(ErrorType type, Args&&... args)
+    {
+        return throw_exception(T::create(global_object(), String::format(type.message(), forward<Args>(args)...)));
     }
 
     Value last_value() const { return m_last_value; }
+
+    bool underscore_is_last_value() const { return m_underscore_is_last_value; }
+    void set_underscore_is_last_value(bool b) { m_underscore_is_last_value = b; }
 
     Console& console() { return m_console; }
     const Console& console() const { return m_console; }
 
     String join_arguments() const;
-    Vector<String> get_trace() const;
+
+    Value resolve_this_binding() const;
+    const LexicalEnvironment* get_this_environment() const;
+    Value get_new_target() const;
+
+#define __JS_ENUMERATE(SymbolName, snake_name) \
+    Symbol* well_known_symbol_##snake_name() const { return m_well_known_symbol_##snake_name; }
+    JS_ENUMERATE_WELL_KNOWN_SYMBOLS
+#undef __JS_ENUMERATE
 
 private:
     Interpreter();
@@ -185,8 +227,18 @@ private:
     Exception* m_exception { nullptr };
 
     ScopeType m_unwind_until { ScopeType::None };
+    FlyString m_unwind_until_label;
+
+    bool m_underscore_is_last_value { false };
 
     Console m_console;
+
+    HashMap<String, Symbol*> m_global_symbol_map;
+
+#define __JS_ENUMERATE(SymbolName, snake_name) \
+    Symbol* m_well_known_symbol_##snake_name { nullptr };
+    JS_ENUMERATE_WELL_KNOWN_SYMBOLS
+#undef __JS_ENUMERATE
 };
 
 }

@@ -39,35 +39,81 @@ elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
 endif()
 
 file(GLOB AK_SOURCES "../../AK/*.cpp")
-file(GLOB LIBCORE_SOURCES "../../Libraries/LibCore/*.cpp")
+file(GLOB LIBCORE_SOURCES "../../Libraries/LibCore/*.c*")
+file(GLOB LIBGEMINI_SOURCES "../../Libraries/LibGemini/*.cpp")
+file(GLOB LIBGFX_SOURCES "../../Libraries/LibGfx/*.cpp")
 file(GLOB LIBIPC_SOURCES "../../Libraries/LibIPC/*.cpp")
 file(GLOB LIBLINE_SOURCES "../../Libraries/LibLine/*.cpp")
+set(LIBM_SOURCES "../../Libraries/LibM/math.cpp")
+file(GLOB LIBMARKDOWN_SOURCES "../../Libraries/LibMarkdown/*.cpp")
 file(GLOB LIBX86_SOURCES "../../Libraries/LibX86/*.cpp")
 file(GLOB LIBJS_SOURCES "../../Libraries/LibJS/*.cpp")
 file(GLOB LIBJS_SUBDIR_SOURCES "../../Libraries/LibJS/*/*.cpp")
+file(GLOB LIBCRYPTO_SOURCES "../../Libraries/LibCrypto/*.cpp")
+file(GLOB LIBCRYPTO_SUBDIR_SOURCES "../../Libraries/LibCrypto/*/*.cpp")
+file(GLOB LIBTLS_SOURCES "../../Libraries/LibTLS/*.cpp")
+file(GLOB SHELL_SOURCES "../../Shell/*.cpp")
+file(GLOB SHELL_TESTS "../../Shell/Tests/*.sh")
 
-set(SOURCES ${AK_SOURCES} ${LIBCORE_SOURCES} ${LIBIPC_SOURCES} ${LIBLINE_SOURCES} ${LIBJS_SOURCES} ${LIBJS_SUBDIR_SOURCES} ${LIBX86_SOURCES})
+set(LAGOM_CORE_SOURCES ${AK_SOURCES} ${LIBCORE_SOURCES})
+set(LAGOM_MORE_SOURCES ${LIBIPC_SOURCES} ${LIBLINE_SOURCES} ${LIBJS_SOURCES} ${LIBJS_SUBDIR_SOURCES} ${LIBX86_SOURCES} ${LIBCRYPTO_SOURCES} ${LIBCRYPTO_SUBDIR_SOURCES} ${LIBTLS_SOURCES} ${LIBMARKDOWN_SOURCES} ${LIBGEMINI_SOURCES} ${LIBGFX_SOURCES})
 
 include_directories (../../)
 include_directories (../../Libraries/)
-add_library(lagom ${SOURCES})
+add_library(LagomCore ${LAGOM_CORE_SOURCES})
 
-add_executable(TestApp TestApp.cpp)
-target_link_libraries(TestApp lagom)
-target_link_libraries(TestApp stdc++)
+if (BUILD_LAGOM)
+    add_library(Lagom $<TARGET_OBJECTS:LagomCore> ${LAGOM_MORE_SOURCES})
 
-add_executable(TestJson TestJson.cpp)
-target_link_libraries(TestJson lagom)
-target_link_libraries(TestJson stdc++)
+    add_executable(TestApp TestApp.cpp)
+    target_link_libraries(TestApp Lagom)
+    target_link_libraries(TestApp stdc++)
 
-add_executable(js ../../Userland/js.cpp)
-target_link_libraries(js lagom)
-target_link_libraries(js stdc++)
-target_link_libraries(js pthread)
+    add_executable(TestJson TestJson.cpp)
+    target_link_libraries(TestJson Lagom)
+    target_link_libraries(TestJson stdc++)
 
-add_executable(disasm ../../Userland/disasm.cpp)
-target_link_libraries(disasm lagom)
-target_link_libraries(disasm stdc++)
+    add_executable(js_lagom ../../Userland/js.cpp)
+    set_target_properties(js_lagom PROPERTIES OUTPUT_NAME js)
+    target_link_libraries(js_lagom Lagom)
+    target_link_libraries(js_lagom stdc++)
+    target_link_libraries(js_lagom pthread)
+
+    add_executable(test-js_lagom ../../Userland/test-js.cpp)
+    set_target_properties(test-js_lagom PROPERTIES OUTPUT_NAME test-js)
+    target_link_libraries(test-js_lagom Lagom)
+    target_link_libraries(test-js_lagom stdc++)
+    target_link_libraries(test-js_lagom pthread)
+
+    add_executable(test-crypto_lagom ../../Userland/test-crypto.cpp)
+    set_target_properties(test-crypto_lagom PROPERTIES OUTPUT_NAME test-crypto)
+    target_link_libraries(test-crypto_lagom Lagom)
+    target_link_libraries(test-crypto_lagom stdc++)
+    add_test(
+        NAME Crypto
+        COMMAND test-crypto_lagom test -tc
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    add_executable(disasm_lagom ../../Userland/disasm.cpp)
+    set_target_properties(disasm_lagom PROPERTIES OUTPUT_NAME disasm)
+    target_link_libraries(disasm_lagom Lagom)
+    target_link_libraries(disasm_lagom stdc++)
+
+    add_executable(shell_lagom ${SHELL_SOURCES})
+    set_target_properties(shell_lagom PROPERTIES OUTPUT_NAME shell)
+    target_link_libraries(shell_lagom Lagom)
+    target_link_libraries(shell_lagom stdc++)
+    target_link_libraries(shell_lagom pthread)
+    foreach(TEST_PATH ${SHELL_TESTS})
+        get_filename_component(TEST_NAME ${TEST_PATH} NAME_WE)
+        add_test(
+            NAME "Shell-${TEST_NAME}"
+            COMMAND shell_lagom "${TEST_PATH}"
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        )
+    endforeach()
+endif()
 
 if (ENABLE_FUZZER_SANITIZER)
     add_subdirectory(Fuzzers)

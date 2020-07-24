@@ -87,6 +87,8 @@ TEST_CASE(starts_with)
     EXPECT(!test_string.starts_with('B'));
     EXPECT(test_string.starts_with("ABCDEF"));
     EXPECT(!test_string.starts_with("DEF"));
+    EXPECT(test_string.starts_with("abc",  CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string.starts_with("abc",  CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(ends_with)
@@ -97,6 +99,8 @@ TEST_CASE(ends_with)
     EXPECT(!test_string.ends_with('E'));
     EXPECT(test_string.ends_with("ABCDEF"));
     EXPECT(!test_string.ends_with("ABC"));
+    EXPECT(test_string.ends_with("def",  CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string.ends_with("def",  CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(copy_string)
@@ -125,9 +129,8 @@ TEST_CASE(repeated)
 
 TEST_CASE(to_int)
 {
-    bool ok;
-    EXPECT(String("123").to_int(ok) == 123 && ok);
-    EXPECT(String("-123").to_int(ok) == -123 && ok);
+    EXPECT_EQ(String("123").to_int().value(), 123);
+    EXPECT_EQ(String("-123").to_int().value(), -123);
 }
 
 TEST_CASE(to_lowercase)
@@ -197,6 +200,15 @@ TEST_CASE(split)
     EXPECT_EQ(parts[0].characters()[3], '\0');
     EXPECT_EQ(parts[1].characters()[3], '\0');
     EXPECT_EQ(parts[2].characters()[3], '\0');
+}
+
+TEST_CASE(builder_zero_initial_capacity)
+{
+   StringBuilder builder(0);
+   builder.append("");
+   auto built = builder.build();
+   EXPECT_EQ(built.is_null(), false);
+   EXPECT_EQ(built.length(), 0u);
 }
 
 TEST_MAIN(String)

@@ -25,16 +25,16 @@
  */
 
 #include "ClientConnection.h"
-#include "NotificationClientEndpoint.h"
 #include "NotificationWindow.h"
 #include <AK/HashMap.h>
+#include <NotificationServer/NotificationClientEndpoint.h>
 
 namespace NotificationServer {
 
 static HashMap<int, RefPtr<ClientConnection>> s_connections;
 
-ClientConnection::ClientConnection(Core::LocalSocket& client_socket, int client_id)
-    : IPC::ClientConnection<NotificationServerEndpoint>(*this, client_socket, client_id)
+ClientConnection::ClientConnection(NonnullRefPtr<Core::LocalSocket> client_socket, int client_id)
+    : IPC::ClientConnection<NotificationServerEndpoint>(*this, move(client_socket), client_id)
 {
     s_connections.set(client_id, *this);
 }

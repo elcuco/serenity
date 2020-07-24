@@ -28,6 +28,38 @@
 
 #include <AK/Types.h>
 
+#define O_RDONLY (1 << 0)
+#define O_WRONLY (1 << 1)
+#define O_RDWR (O_RDONLY | O_WRONLY)
+#define O_ACCMODE (O_RDONLY | O_WRONLY)
+#define O_EXEC (1 << 2)
+#define O_CREAT (1 << 3)
+#define O_EXCL (1 << 4)
+#define O_NOCTTY (1 << 5)
+#define O_TRUNC (1 << 6)
+#define O_APPEND (1 << 7)
+#define O_NONBLOCK (1 << 8)
+#define O_DIRECTORY (1 << 9)
+#define O_NOFOLLOW (1 << 10)
+#define O_CLOEXEC (1 << 11)
+#define O_DIRECT (1 << 12)
+
+// Kernel internal options.
+#define O_NOFOLLOW_NOERROR (1 << 29)
+#define O_UNLINK_INTERNAL (1 << 30)
+
+#define MS_NODEV (1 << 0)
+#define MS_NOEXEC (1 << 1)
+#define MS_NOSUID (1 << 2)
+#define MS_BIND (1 << 3)
+#define MS_RDONLY (1 << 4)
+#define MS_REMOUNT (1 << 5)
+
+enum {
+    _SC_NPROCESSORS_CONF,
+    _SC_NPROCESSORS_ONLN,
+};
+
 #define PERF_EVENT_MALLOC 1
 #define PERF_EVENT_FREE 2
 
@@ -74,11 +106,34 @@
 #define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
+#define F_ISTTY 5
 
 #define FD_CLOEXEC 1
 
 #define FUTEX_WAIT 1
 #define FUTEX_WAKE 2
+
+#define S_IFMT 0170000
+#define S_IFDIR 0040000
+#define S_IFCHR 0020000
+#define S_IFBLK 0060000
+#define S_IFREG 0100000
+#define S_IFIFO 0010000
+#define S_IFLNK 0120000
+#define S_IFSOCK 0140000
+
+#define S_ISUID 04000
+#define S_ISGID 02000
+#define S_ISVTX 01000
+#define S_IRUSR 0400
+#define S_IWUSR 0200
+#define S_IXUSR 0100
+#define S_IRGRP 0040
+#define S_IWGRP 0020
+#define S_IXGRP 0010
+#define S_IROTH 0004
+#define S_IWOTH 0002
+#define S_IXOTH 0001
 
 /* c_cc characters */
 #define VINTR 0
@@ -319,7 +374,7 @@ struct sigaction {
 
 #define OFF_T_MAX 2147483647
 
-typedef i32 off_t;
+typedef ssize_t off_t;
 typedef i64 time_t;
 
 struct utimbuf {
@@ -400,11 +455,11 @@ struct pollfd {
 
 #define SO_RCVTIMEO 1
 #define SO_SNDTIMEO 2
-#define SO_KEEPALIVE 3
 #define SO_ERROR 4
 #define SO_PEERCRED 5
 #define SO_REUSEADDR 6
 #define SO_BINDTODEVICE 7
+#define SO_KEEPALIVE 9
 
 #define IPPROTO_IP 0
 #define IPPROTO_ICMP 1
@@ -482,12 +537,6 @@ struct utsname {
     char release[UTSNAME_ENTRY_LEN];
     char version[UTSNAME_ENTRY_LEN];
     char machine[UTSNAME_ENTRY_LEN];
-};
-
-struct [[gnu::packed]] FarPtr
-{
-    u32 offset { 0 };
-    u16 selector { 0 };
 };
 
 struct iovec {

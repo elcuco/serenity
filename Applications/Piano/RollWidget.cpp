@@ -26,7 +26,7 @@
  */
 
 #include "RollWidget.h"
-#include "AudioEngine.h"
+#include "TrackManager.h"
 #include <LibGUI/Painter.h>
 #include <LibGUI/ScrollBar.h>
 #include <math.h>
@@ -37,8 +37,8 @@ constexpr int roll_height = note_count * note_height;
 constexpr int horizontal_scroll_sensitivity = 20;
 constexpr int max_zoom = 1 << 8;
 
-RollWidget::RollWidget(AudioEngine& audio_engine)
-    : m_audio_engine(audio_engine)
+RollWidget::RollWidget(TrackManager& track_manager)
+    : m_track_manager(track_manager)
 {
     set_should_hide_unnecessary_scrollbars(true);
     set_content_size({ 0, roll_height });
@@ -87,8 +87,8 @@ void RollWidget::paint_event(GUI::PaintEvent& event)
 
     GUI::Painter painter(*this);
     painter.translate(frame_thickness(), frame_thickness());
-    painter.translate(-horizontal_note_offset_remainder, -note_offset_remainder);
     painter.add_clip_rect(event.rect());
+    painter.translate(-horizontal_note_offset_remainder, -note_offset_remainder);
 
     for (int y = 0; y < notes_to_paint; ++y) {
         int y_pos = y * note_height;
@@ -98,7 +98,7 @@ void RollWidget::paint_event(GUI::PaintEvent& event)
             int x_pos = x * m_note_width;
             int next_x_pos = (x + 1) * m_note_width;
             int distance_to_next_x = next_x_pos - x_pos;
-            Gfx::Rect rect(x_pos, y_pos, distance_to_next_x, note_height);
+            Gfx::IntRect rect(x_pos, y_pos, distance_to_next_x, note_height);
 
             if (key_pattern[key_pattern_index] == Black)
                 painter.fill_rect(rect, Color::LightGray);
@@ -117,7 +117,7 @@ void RollWidget::paint_event(GUI::PaintEvent& event)
     painter.translate(horizontal_note_offset_remainder, note_offset_remainder);
 
     for (int note = note_count - (note_offset + notes_to_paint); note <= (note_count - 1) - note_offset; ++note) {
-        for (auto roll_note : m_audio_engine.roll_notes(note)) {
+        for (auto roll_note : m_track_manager.current_track().roll_notes(note)) {
             int x = m_roll_width * (static_cast<double>(roll_note.on_sample) / roll_length);
             int width = m_roll_width * (static_cast<double>(roll_note.length()) / roll_length);
             if (x + width < x_offset || x > x_offset + widget_inner_rect().width())
@@ -128,13 +128,13 @@ void RollWidget::paint_event(GUI::PaintEvent& event)
             int y = ((note_count - 1) - note) * note_height;
             int height = note_height;
 
-            Gfx::Rect rect(x, y, width, height);
+            Gfx::IntRect rect(x, y, width, height);
             painter.fill_rect(rect, note_pressed_color);
             painter.draw_rect(rect, Color::Black);
         }
     }
 
-    int x = m_roll_width * (static_cast<double>(m_audio_engine.time()) / roll_length);
+    int x = m_roll_width * (static_cast<double>(m_track_manager.time()) / roll_length);
     if (x > x_offset && x <= x_offset + widget_inner_rect().width())
         painter.draw_line({ x, 0 }, { x, roll_height }, Gfx::Color::Black);
 
@@ -164,7 +164,7 @@ void RollWidget::mousedown_event(GUI::MouseEvent& event)
     int note = (note_count - 1) - y;
     u32 on_sample = roll_length * (static_cast<double>(x) / m_num_notes);
     u32 off_sample = (roll_length * (static_cast<double>(x + 1) / m_num_notes)) - 1;
-    m_audio_engine.set_roll_note(note, on_sample, off_sample);
+    m_track_manager.current_track().set_roll_note(note, on_sample, off_sample);
 
     update();
 }

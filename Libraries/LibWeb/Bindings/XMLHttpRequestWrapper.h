@@ -28,12 +28,11 @@
 
 #include <LibWeb/Bindings/EventTargetWrapper.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
 class XMLHttpRequestWrapper final : public EventTargetWrapper {
 public:
-    explicit XMLHttpRequestWrapper(XMLHttpRequest&);
+    XMLHttpRequestWrapper(JS::GlobalObject&, XMLHttpRequest&);
     virtual ~XMLHttpRequestWrapper() override;
 
     XMLHttpRequest& impl();
@@ -43,7 +42,6 @@ private:
     virtual const char* class_name() const override { return "XMLHttpRequestWrapper"; }
 };
 
-XMLHttpRequestWrapper* wrap(JS::Heap&, XMLHttpRequest&);
+XMLHttpRequestWrapper* wrap(JS::GlobalObject&, XMLHttpRequest&);
 
-}
 }

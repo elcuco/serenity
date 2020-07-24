@@ -24,6 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/QuickSort.h>
+#include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleSheet.h>
@@ -49,7 +51,7 @@ void dump_tree(const Node& node)
     if (is<Document>(node)) {
         dbgprintf("*Document*\n");
     } else if (is<Element>(node)) {
-        dbgprintf("<%s", to<Element>(node).tag_name().characters());
+        dbgprintf("<%s", to<Element>(node).local_name().characters());
         to<Element>(node).for_each_attribute([](auto& name, auto& value) {
             dbgprintf(" %s=%s", name.characters(), value.characters());
         });
@@ -86,41 +88,58 @@ void dump_tree(const LayoutNode& layout_node)
     else if (is<Document>(layout_node.node()))
         tag_name = "#document";
     else if (is<Element>(layout_node.node()))
-        tag_name = to<Element>(*layout_node.node()).tag_name();
+        tag_name = to<Element>(*layout_node.node()).local_name();
     else
         tag_name = "???";
 
+    String identifier = "";
+    if (layout_node.node() && is<Element>(*layout_node.node())) {
+        auto& element = to<Element>(*layout_node.node());
+        StringBuilder builder;
+        auto id = element.attribute(HTML::AttributeNames::id);
+        if (!id.is_empty()) {
+            builder.append('#');
+            builder.append(id);
+        }
+        for (auto& class_name : element.class_names()) {
+            builder.append('.');
+            builder.append(class_name);
+        }
+        identifier = builder.to_string();
+    }
+
     if (!layout_node.is_box()) {
-        dbgprintf("%s {%s}\n", layout_node.class_name(), tag_name.characters());
+        dbgprintf("%s {\033[33m%s\033[0m%s}\n", layout_node.class_name(), tag_name.characters(), identifier.characters());
     } else {
         auto& layout_box = to<LayoutBox>(layout_node);
-        dbgprintf("%s {%s} at (%g,%g) size %gx%g",
+        dbgprintf("%s {\033[34m%s\033[0m%s} at (%g,%g) size %gx%g",
             layout_box.class_name(),
             tag_name.characters(),
-            layout_box.x(),
-            layout_box.y(),
+            identifier.characters(),
+            layout_box.absolute_x(),
+            layout_box.absolute_y(),
             layout_box.width(),
             layout_box.height());
 
         // Dump the horizontal box properties
         dbgprintf(" [%g+%g+%g %g %g+%g+%g]",
-            layout_box.box_model().margin().left.to_px(),
-            layout_box.box_model().border().left.to_px(),
-            layout_box.box_model().padding().left.to_px(),
+            layout_box.box_model().margin.left.to_px(layout_box),
+            layout_box.box_model().border.left.to_px(layout_box),
+            layout_box.box_model().padding.left.to_px(layout_box),
             layout_box.width(),
-            layout_box.box_model().padding().right.to_px(),
-            layout_box.box_model().border().right.to_px(),
-            layout_box.box_model().margin().right.to_px());
+            layout_box.box_model().padding.right.to_px(layout_box),
+            layout_box.box_model().border.right.to_px(layout_box),
+            layout_box.box_model().margin.right.to_px(layout_box));
 
         // And the vertical box properties
         dbgprintf(" [%g+%g+%g %g %g+%g+%g]",
-            layout_box.box_model().margin().top.to_px(),
-            layout_box.box_model().border().top.to_px(),
-            layout_box.box_model().padding().top.to_px(),
+            layout_box.box_model().margin.top.to_px(layout_box),
+            layout_box.box_model().border.top.to_px(layout_box),
+            layout_box.box_model().padding.top.to_px(layout_box),
             layout_box.height(),
-            layout_box.box_model().padding().bottom.to_px(),
-            layout_box.box_model().border().bottom.to_px(),
-            layout_box.box_model().margin().bottom.to_px());
+            layout_box.box_model().padding.bottom.to_px(layout_box),
+            layout_box.box_model().border.bottom.to_px(layout_box),
+            layout_box.box_model().margin.bottom.to_px(layout_box));
 
         dbgprintf("\n");
     }
@@ -145,7 +164,7 @@ void dump_tree(const LayoutNode& layout_node)
                     &fragment.layout_node(),
                     fragment.start(),
                     fragment.length(),
-                    fragment.rect().to_string().characters());
+                    fragment.absolute_rect().to_string().characters());
                 if (fragment.layout_node().is_text()) {
                     for (size_t i = 0; i < indent; ++i)
                         dbgprintf("    ");
@@ -157,11 +176,21 @@ void dump_tree(const LayoutNode& layout_node)
         }
     }
 
-    layout_node.style().for_each_property([&](auto property_id, auto& value) {
+    struct NameAndValue {
+        String name;
+        String value;
+    };
+    Vector<NameAndValue> properties;
+    layout_node.specified_style().for_each_property([&](auto property_id, auto& value) {
+        properties.append({ CSS::string_from_property_id(property_id), value.to_string() });
+    });
+    quick_sort(properties, [](auto& a, auto& b) { return a.name < b.name; });
+
+    for (auto& property : properties) {
         for (size_t i = 0; i < indent; ++i)
             dbgprintf("    ");
-        dbgprintf("  (%s: %s)\n", CSS::string_from_property_id(property_id), value.to_string().characters());
-    });
+        dbgprintf("  (%s: %s)\n", property.name.characters(), property.value.characters());
+    }
 
     ++indent;
     layout_node.for_each_child([](auto& child) {
@@ -229,9 +258,48 @@ void dump_selector(const Selector& selector)
             case Selector::SimpleSelector::AttributeMatchType::ExactValueMatch:
                 attribute_match_type_description = "ExactValueMatch";
                 break;
+            case Selector::SimpleSelector::AttributeMatchType::Contains:
+                attribute_match_type_description = "Contains";
+                break;
+            }
+
+            const char* pseudo_class_description = "";
+            switch (simple_selector.pseudo_class) {
+            case Selector::SimpleSelector::PseudoClass::Link:
+                pseudo_class_description = "Link";
+                break;
+            case Selector::SimpleSelector::PseudoClass::Visited:
+                pseudo_class_description = "Visited";
+                break;
+            case Selector::SimpleSelector::PseudoClass::None:
+                pseudo_class_description = "None";
+                break;
+            case Selector::SimpleSelector::PseudoClass::Root:
+                pseudo_class_description = "Root";
+                break;
+            case Selector::SimpleSelector::PseudoClass::Focus:
+                pseudo_class_description = "Focus";
+                break;
+            case Selector::SimpleSelector::PseudoClass::Empty:
+                pseudo_class_description = "Empty";
+                break;
+            case Selector::SimpleSelector::PseudoClass::Hover:
+                pseudo_class_description = "Hover";
+                break;
+            case Selector::SimpleSelector::PseudoClass::LastChild:
+                pseudo_class_description = "LastChild";
+                break;
+            case Selector::SimpleSelector::PseudoClass::FirstChild:
+                pseudo_class_description = "FirstChild";
+                break;
+            case Selector::SimpleSelector::PseudoClass::OnlyChild:
+                pseudo_class_description = "OnlyChild";
+                break;
             }
 
             dbgprintf("%s:%s", type_description, simple_selector.value.characters());
+            if (simple_selector.pseudo_class != Selector::SimpleSelector::PseudoClass::None)
+                dbgprintf(" pseudo_class=%s", pseudo_class_description);
             if (simple_selector.attribute_match_type != Selector::SimpleSelector::AttributeMatchType::None) {
                 dbgprintf(" [%s, name='%s', value='%s']", attribute_match_type_description, simple_selector.attribute_name.characters(), simple_selector.attribute_value.characters());
             }

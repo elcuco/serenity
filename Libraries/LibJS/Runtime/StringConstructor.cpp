@@ -25,6 +25,7 @@
  */
 
 #include <AK/StringBuilder.h>
+#include <AK/Utf32View.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
@@ -34,13 +35,20 @@
 
 namespace JS {
 
-StringConstructor::StringConstructor()
-    : NativeFunction("String", *interpreter().global_object().function_prototype())
+StringConstructor::StringConstructor(GlobalObject& global_object)
+    : NativeFunction("String", *global_object.function_prototype())
 {
-    put("prototype", interpreter().global_object().string_prototype(), 0);
-    put("length", Value(1), Attribute::Configurable);
+}
 
-    put_native_function("raw", raw, 0, Attribute::Writable | Attribute::Configurable);
+void StringConstructor::initialize(GlobalObject& global_object)
+{
+    NativeFunction::initialize(global_object);
+    define_property("prototype", global_object.string_prototype(), 0);
+    define_property("length", Value(1), Attribute::Configurable);
+
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    define_native_function("raw", raw, 1, attr);
+    define_native_function("fromCharCode", from_char_code, 1, attr);
 }
 
 StringConstructor::~StringConstructor()
@@ -51,44 +59,74 @@ Value StringConstructor::call(Interpreter& interpreter)
 {
     if (!interpreter.argument_count())
         return js_string(interpreter, "");
-    return js_string(interpreter, interpreter.argument(0).to_string());
+    auto* string = interpreter.argument(0).to_primitive_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    return string;
 }
 
-Value StringConstructor::construct(Interpreter& interpreter)
+Value StringConstructor::construct(Interpreter& interpreter, Function&)
 {
     PrimitiveString* primitive_string = nullptr;
     if (!interpreter.argument_count())
         primitive_string = js_string(interpreter, "");
     else
-        primitive_string = js_string(interpreter, interpreter.argument(0).to_string());
+        primitive_string = interpreter.argument(0).to_primitive_string(interpreter);
     if (!primitive_string)
         return {};
-    return StringObject::create(interpreter.global_object(), *primitive_string);
+    return StringObject::create(global_object(), *primitive_string);
 }
 
-Value StringConstructor::raw(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringConstructor::raw)
 {
-    auto* template_object = interpreter.argument(0).to_object(interpreter.heap());
+    auto* template_object = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
 
     auto raw = template_object->get("raw");
+    if (interpreter.exception())
+        return {};
     if (raw.is_empty() || raw.is_undefined() || raw.is_null()) {
-        interpreter.throw_exception<TypeError>(String::format("Cannot convert property 'raw' to object from %s", raw.is_null() ? "null" : "undefined"));
+        interpreter.throw_exception<TypeError>(ErrorType::StringRawCannotConvert, raw.is_null() ? "null" : "undefined");
         return {};
     }
     if (!raw.is_array())
         return js_string(interpreter, "");
 
-    auto& raw_array_elements = static_cast<Array*>(raw.to_object(interpreter.heap()))->elements();
+    auto* array = static_cast<Array*>(raw.to_object(interpreter, global_object));
+    auto& raw_array_elements = array->indexed_properties();
     StringBuilder builder;
 
-    for (size_t i = 0; i < raw_array_elements.size(); ++i) {
-        builder.append(raw_array_elements.at(i).to_string());
-        if (i + 1 < interpreter.argument_count() && i < raw_array_elements.size() - 1)
-            builder.append(interpreter.argument(i + 1).to_string());
+    for (size_t i = 0; i < raw_array_elements.array_like_size(); ++i) {
+        auto result = raw_array_elements.get(array, i);
+        if (interpreter.exception())
+            return {};
+        if (!result.has_value())
+            continue;
+        builder.append(result.value().value.to_string(interpreter));
+        if (interpreter.exception())
+            return {};
+        if (i + 1 < interpreter.argument_count() && i < raw_array_elements.array_like_size() - 1) {
+            builder.append(interpreter.argument(i + 1).to_string(interpreter));
+            if (interpreter.exception())
+                return {};
+        }
     }
 
+    return js_string(interpreter, builder.build());
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringConstructor::from_char_code)
+{
+    StringBuilder builder;
+    for (size_t i = 0; i < interpreter.argument_count(); ++i) {
+        auto char_code = interpreter.argument(i).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
+        auto truncated = char_code & 0xffff;
+        // FIXME: We need an Utf16View :^)
+        builder.append(Utf32View((u32*)&truncated, 1));
+    }
     return js_string(interpreter, builder.build());
 }
 

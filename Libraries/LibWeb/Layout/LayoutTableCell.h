@@ -32,15 +32,18 @@ namespace Web {
 
 class LayoutTableCell final : public LayoutBlock {
 public:
-    LayoutTableCell(const Element&, NonnullRefPtr<StyleProperties>);
+    LayoutTableCell(Document&, const Element&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutTableCell() override;
 
     LayoutTableCell* next_cell() { return next_sibling_of_type<LayoutTableCell>(); }
     const LayoutTableCell* next_cell() const { return next_sibling_of_type<LayoutTableCell>(); }
 
+    size_t colspan() const;
+
 private:
     virtual bool is_table_cell() const override { return true; }
     virtual const char* class_name() const override { return "LayoutTableCell"; }
+    virtual float width_of_logical_containing_block() const override;
 };
 
 template<>

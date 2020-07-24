@@ -38,7 +38,7 @@ static Object* get_target_object_from(Interpreter& interpreter, const String& na
 {
     auto target = interpreter.argument(0);
     if (!target.is_object()) {
-        interpreter.throw_exception<TypeError>(String::format("First argument of Reflect.%s() must be an object", name.characters()));
+        interpreter.throw_exception<TypeError>(ErrorType::ReflectArgumentMustBeAnObject, name.characters());
         return nullptr;
     }
     return static_cast<Object*>(&target.as_object());
@@ -48,7 +48,7 @@ static Function* get_target_function_from(Interpreter& interpreter, const String
 {
     auto target = interpreter.argument(0);
     if (!target.is_function()) {
-        interpreter.throw_exception<TypeError>(String::format("First argument of Reflect.%s() must be a function", name.characters()));
+        interpreter.throw_exception<TypeError>(ErrorType::ReflectArgumentMustBeAFunction, name.characters());
         return nullptr;
     }
     return &target.as_function();
@@ -57,14 +57,16 @@ static Function* get_target_function_from(Interpreter& interpreter, const String
 static void prepare_arguments_list(Interpreter& interpreter, Value value, MarkedValueList* arguments)
 {
     if (!value.is_object()) {
-        interpreter.throw_exception<TypeError>("Arguments list must be an object");
+        interpreter.throw_exception<TypeError>(ErrorType::ReflectBadArgumentsList);
         return;
     }
     auto& arguments_list = value.as_object();
     auto length_property = arguments_list.get("length");
     if (interpreter.exception())
         return;
-    auto length = length_property.to_size_t();
+    auto length = length_property.to_size_t(interpreter);
+    if (interpreter.exception())
+        return;
     for (size_t i = 0; i < length; ++i) {
         auto element = arguments_list.get(String::number(i));
         if (interpreter.exception())
@@ -73,30 +75,35 @@ static void prepare_arguments_list(Interpreter& interpreter, Value value, Marked
     }
 }
 
-ReflectObject::ReflectObject()
-    : Object(interpreter().global_object().object_prototype())
+ReflectObject::ReflectObject(GlobalObject& global_object)
+    : Object(*global_object.object_prototype())
 {
+}
+
+void ReflectObject::initialize(GlobalObject& global_object)
+{
+    Object::initialize(global_object);
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    put_native_function("apply", apply, 3, attr);
-    put_native_function("construct", construct, 2, attr);
-    put_native_function("defineProperty", define_property, 3, attr);
-    put_native_function("deleteProperty", delete_property, 2, attr);
-    put_native_function("get", get, 2, attr);
-    put_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2, attr);
-    put_native_function("getPrototypeOf", get_prototype_of, 1, attr);
-    put_native_function("has", has, 2, attr);
-    put_native_function("isExtensible", is_extensible, 1, attr);
-    put_native_function("ownKeys", own_keys, 1, attr);
-    put_native_function("preventExtensions", prevent_extensions, 1, attr);
-    put_native_function("set", set, 3, attr);
-    put_native_function("setPrototypeOf", set_prototype_of, 2, attr);
+    define_native_function("apply", apply, 3, attr);
+    define_native_function("construct", construct, 2, attr);
+    define_native_function("defineProperty", define_property, 3, attr);
+    define_native_function("deleteProperty", delete_property, 2, attr);
+    define_native_function("get", get, 2, attr);
+    define_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2, attr);
+    define_native_function("getPrototypeOf", get_prototype_of, 1, attr);
+    define_native_function("has", has, 2, attr);
+    define_native_function("isExtensible", is_extensible, 1, attr);
+    define_native_function("ownKeys", own_keys, 1, attr);
+    define_native_function("preventExtensions", prevent_extensions, 1, attr);
+    define_native_function("set", set, 3, attr);
+    define_native_function("setPrototypeOf", set_prototype_of, 2, attr);
 }
 
 ReflectObject::~ReflectObject()
 {
 }
 
-Value ReflectObject::apply(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::apply)
 {
     auto* target = get_target_function_from(interpreter, "apply");
     if (!target)
@@ -109,7 +116,7 @@ Value ReflectObject::apply(Interpreter& interpreter)
     return interpreter.call(*target, this_arg, move(arguments));
 }
 
-Value ReflectObject::construct(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::construct)
 {
     auto* target = get_target_function_from(interpreter, "construct");
     if (!target)
@@ -123,63 +130,78 @@ Value ReflectObject::construct(Interpreter& interpreter)
         auto new_target_value = interpreter.argument(2);
         if (!new_target_value.is_function()
             || (new_target_value.as_object().is_native_function() && !static_cast<NativeFunction&>(new_target_value.as_object()).has_constructor())) {
-            interpreter.throw_exception<TypeError>("Optional third argument of Reflect.construct() must be a constructor");
+            interpreter.throw_exception<TypeError>(ErrorType::ReflectBadNewTarget);
             return {};
         }
         new_target = &new_target_value.as_function();
     }
-    return interpreter.construct(*target, *new_target, move(arguments));
+    return interpreter.construct(*target, *new_target, move(arguments), global_object);
 }
 
-Value ReflectObject::define_property(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::define_property)
 {
     auto* target = get_target_object_from(interpreter, "defineProperty");
     if (!target)
         return {};
     if (!interpreter.argument(2).is_object())
-        return interpreter.throw_exception<TypeError>("Descriptor argument is not an object");
-    auto property_key = interpreter.argument(1).to_string();
+        return interpreter.throw_exception<TypeError>(ErrorType::ReflectBadDescriptorArgument);
+    auto property_key = StringOrSymbol::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
     auto& descriptor = interpreter.argument(2).as_object();
     auto success = target->define_property(property_key, descriptor, false);
+    if (interpreter.exception())
+        return {};
     return Value(success);
 }
 
-Value ReflectObject::delete_property(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::delete_property)
 {
     auto* target = get_target_object_from(interpreter, "deleteProperty");
     if (!target)
         return {};
 
     auto property_key = interpreter.argument(1);
-    PropertyName property = PropertyName(property_key.to_string());
-    if (property_key.to_number().is_finite_number()) {
-        auto property_key_as_double = property_key.to_double();
+    auto property_name = PropertyName::from_value(interpreter, property_key);
+    if (interpreter.exception())
+        return {};
+    auto property_key_number = property_key.to_number(interpreter);
+    if (interpreter.exception())
+        return {};
+    if (property_key_number.is_finite_number()) {
+        auto property_key_as_double = property_key_number.as_double();
         if (property_key_as_double >= 0 && (i32)property_key_as_double == property_key_as_double)
-            property = PropertyName(property_key_as_double);
+            property_name = PropertyName(property_key_as_double);
     }
-    return target->delete_property(property);
+    return target->delete_property(property_name);
 }
 
-Value ReflectObject::get(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get)
 {
-    // FIXME: There's a third argument, receiver, for getters - use it once we have those.
     auto* target = get_target_object_from(interpreter, "get");
     if (!target)
         return {};
-    auto property_key = interpreter.argument(1).to_string();
-    return target->get(property_key).value_or(js_undefined());
+    auto property_key = PropertyName::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
+    Value receiver = {};
+    if (interpreter.argument_count() > 2)
+        receiver = interpreter.argument(2);
+    return target->get(property_key, receiver).value_or(js_undefined());
 }
 
-Value ReflectObject::get_own_property_descriptor(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get_own_property_descriptor)
 {
     auto* target = get_target_object_from(interpreter, "getOwnPropertyDescriptor");
     if (!target)
         return {};
-    auto property_key = interpreter.argument(1).to_string();
-    return target->get_own_property_descriptor(property_key);
+    auto property_key = PropertyName::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
+    return target->get_own_property_descriptor_object(property_key);
 }
 
-Value ReflectObject::get_prototype_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::get_prototype_of)
 {
     auto* target = get_target_object_from(interpreter, "getPrototypeOf");
     if (!target)
@@ -187,64 +209,70 @@ Value ReflectObject::get_prototype_of(Interpreter& interpreter)
     return target->prototype();
 }
 
-Value ReflectObject::has(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::has)
 {
     auto* target = get_target_object_from(interpreter, "has");
     if (!target)
         return {};
-    auto property_key = interpreter.argument(1).to_string();
+    auto property_key = PropertyName::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
     return Value(target->has_property(property_key));
 }
 
-Value ReflectObject::is_extensible(Interpreter&)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::is_extensible)
 {
-    // FIXME: For this to be useful we need one of these:
-    // Object.seal(), Object.freeze(), Reflect.preventExtensions()
-    // For now we just return true, as that's always the case.
-    return Value(true);
+    auto* target = get_target_object_from(interpreter, "isExtensible");
+    if (!target)
+        return {};
+    return Value(target->is_extensible());
 }
 
-Value ReflectObject::own_keys(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::own_keys)
 {
     auto* target = get_target_object_from(interpreter, "ownKeys");
     if (!target)
         return {};
-    return target->get_own_properties(*target, GetOwnPropertyMode::Key);
+    return target->get_own_properties(*target, PropertyKind::Key);
 }
 
-Value ReflectObject::prevent_extensions(Interpreter&)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::prevent_extensions)
 {
-    // FIXME: Implement me :^)
-    ASSERT_NOT_REACHED();
+    auto* target = get_target_object_from(interpreter, "preventExtensions");
+    if (!target)
+        return {};
+    return Value(target->prevent_extensions());
 }
 
-Value ReflectObject::set(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::set)
 {
-    // FIXME: There's a fourth argument, receiver, for setters - use it once we have those.
     auto* target = get_target_object_from(interpreter, "set");
     if (!target)
         return {};
-    auto property_key = interpreter.argument(1).to_string();
+    auto property_key = interpreter.argument(1).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
     auto value = interpreter.argument(2);
-    return Value(target->put(property_key, value));
+    Value receiver = {};
+    if (interpreter.argument_count() > 3)
+        receiver = interpreter.argument(3);
+    return Value(target->put(property_key, value, receiver));
 }
 
-Value ReflectObject::set_prototype_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ReflectObject::set_prototype_of)
 {
     auto* target = get_target_object_from(interpreter, "setPrototypeOf");
     if (!target)
         return {};
     auto prototype_value = interpreter.argument(1);
     if (!prototype_value.is_object() && !prototype_value.is_null()) {
-        interpreter.throw_exception<TypeError>("Prototype must be an object or null");
+        interpreter.throw_exception<TypeError>(ErrorType::ObjectPrototypeWrongType);
         return {};
     }
     Object* prototype = nullptr;
     if (!prototype_value.is_null())
         prototype = const_cast<Object*>(&prototype_value.as_object());
-    target->set_prototype(prototype);
-    // FIXME: Needs to return false for prototype chain cycles and non-extensible objects (don't have those yet).
-    return Value(true);
+    return Value(target->set_prototype(prototype));
 }
 
 }

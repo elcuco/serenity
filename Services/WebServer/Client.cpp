@@ -25,7 +25,7 @@
  */
 
 #include "Client.h"
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
@@ -38,9 +38,10 @@
 
 namespace WebServer {
 
-Client::Client(NonnullRefPtr<Core::TCPSocket> socket, Core::Object* parent)
+Client::Client(NonnullRefPtr<Core::TCPSocket> socket, const String& root, Core::Object* parent)
     : Core::Object(parent)
     , m_socket(socket)
+    , m_root_path(root)
 {
 }
 
@@ -78,15 +79,16 @@ void Client::handle_request(ByteBuffer raw_request)
     }
 
     if (request.method() != HTTP::HttpRequest::Method::GET) {
-        send_error_response(403, "Forbidden, bro!", request);
+        send_error_response(403, "Forbidden!", request);
         return;
     }
 
-    auto requested_path = canonicalized_path(request.resource());
+    auto requested_path = LexicalPath::canonicalized_path(request.resource());
     dbg() << "Canonical requested path: '" << requested_path << "'";
 
     StringBuilder path_builder;
-    path_builder.append("/www/");
+    path_builder.append(m_root_path);
+    path_builder.append('/');
     path_builder.append(requested_path);
     auto real_path = path_builder.to_string();
 
@@ -115,7 +117,7 @@ void Client::handle_request(ByteBuffer raw_request)
 
     auto file = Core::File::construct(real_path);
     if (!file->open(Core::File::ReadOnly)) {
-        send_error_response(404, "Not found, bro!", request);
+        send_error_response(404, "Not found!", request);
         return;
     }
 

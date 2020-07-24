@@ -27,7 +27,9 @@
 #include "History.h"
 #include "ManualModel.h"
 #include <AK/ByteBuffer.h>
+#include <AK/URL.h>
 #include <LibCore/File.h>
+#include <LibDesktop/Launcher.h>
 #include <LibGUI/AboutDialog.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
@@ -42,10 +44,8 @@
 #include <LibGUI/TreeView.h>
 #include <LibGUI/Window.h>
 #include <LibMarkdown/Document.h>
-#include <LibWeb/HtmlView.h>
 #include <LibWeb/Layout/LayoutNode.h>
-#include <LibWeb/Parser/CSSParser.h>
-#include <LibWeb/Parser/HTMLParser.h>
+#include <LibWeb/PageView.h>
 #include <libgen.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,9 +57,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio shared_buffer accept rpath", nullptr) < 0) {
+    if (pledge("stdio shared_buffer accept rpath unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -74,9 +74,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (unveil("/tmp/portal/launch", "rw") < 0) {
+        perror("unveil");
+        return 1;
+    }
+
     unveil(nullptr, nullptr);
 
+    auto app_icon = GUI::Icon::default_icon("app-help");
+
     auto window = GUI::Window::construct();
+    window->set_icon(app_icon.bitmap_for_size(16));
     window->set_title("Help");
     window->set_rect(300, 200, 570, 500);
 
@@ -97,7 +105,7 @@ int main(int argc, char* argv[])
     tree_view.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
     tree_view.set_preferred_size(200, 500);
 
-    auto& html_view = splitter.add<Web::HtmlView>();
+    auto& page_view = splitter.add<Web::PageView>();
 
     History history;
 
@@ -111,7 +119,7 @@ int main(int argc, char* argv[])
 
     auto open_page = [&](const String& path) {
         if (path.is_null()) {
-            html_view.set_document(nullptr);
+            page_view.set_document(nullptr);
             return;
         }
 
@@ -122,19 +130,20 @@ int main(int argc, char* argv[])
 
         if (!file->open(Core::IODevice::OpenMode::ReadOnly)) {
             int saved_errno = errno;
-            GUI::MessageBox::show(strerror(saved_errno), "Failed to open man page", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window);
+            GUI::MessageBox::show(window, strerror(saved_errno), "Failed to open man page", GUI::MessageBox::Type::Error);
             return;
         }
         auto buffer = file->read_all();
         StringView source { (const char*)buffer.data(), buffer.size() };
 
-        Markdown::Document md_document;
-        bool success = md_document.parse(source);
-        ASSERT(success);
+        String html;
+        {
+            auto md_document = Markdown::Document::parse(source);
+            ASSERT(md_document);
+            html = md_document->render_to_html();
+        }
 
-        String html = md_document.render_to_html();
-        auto html_document = Web::parse_html_document(html);
-        html_view.set_document(html_document);
+        page_view.load_html(html, URL::create_with_file_protocol(path));
 
         String page_and_section = model->page_and_section(tree_view.selection().first());
         window->set_title(String::format("%s - Help", page_and_section.characters()));
@@ -143,7 +152,8 @@ int main(int argc, char* argv[])
     tree_view.on_selection_change = [&] {
         String path = model->page_path(tree_view.selection().first());
         if (path.is_null()) {
-            html_view.set_document(nullptr);
+            page_view.set_document(nullptr);
+            window->set_title("Help");
             return;
         }
         history.push(path);
@@ -151,11 +161,29 @@ int main(int argc, char* argv[])
         open_page(path);
     };
 
-    html_view.on_link_click = [&](const String& href, auto&, unsigned) {
-        char* current_path = strdup(history.current().characters());
-        char* dir_path = dirname(current_path);
-        char* path = realpath(String::format("%s/%s", dir_path, href.characters()).characters(), nullptr);
-        free(current_path);
+    tree_view.on_toggle = [&](const GUI::ModelIndex& index, const bool open) {
+        model->update_section_node_on_toggle(index, open);
+    };
+
+    auto open_external = [&](auto& url) {
+        if (!Desktop::Launcher::open(url)) {
+            GUI::MessageBox::show(window,
+                String::format("The link to '%s' could not be opened.", url.to_string().characters()),
+                "Failed to open link",
+                GUI::MessageBox::Type::Error);
+        }
+    };
+
+    page_view.on_link_click = [&](auto& url, auto&, unsigned) {
+        if (url.protocol() != "file") {
+            open_external(url);
+            return;
+        }
+        auto path = Core::File::real_path_for(url.path());
+        if (!path.starts_with("/usr/share/man/")) {
+            open_external(url);
+            return;
+        }
         auto tree_view_index = model->index_from_path(path);
         if (tree_view_index.has_value()) {
             dbg() << "Found path _" << path << "_ in model at index " << tree_view_index.value();
@@ -165,7 +193,6 @@ int main(int argc, char* argv[])
         history.push(path);
         update_actions();
         open_page(path);
-        free(path);
     };
 
     go_back_action = GUI::CommonActions::make_go_back_action([&](auto&) {
@@ -190,23 +217,21 @@ int main(int argc, char* argv[])
 
     auto& app_menu = menubar->add_menu("Help");
     app_menu.add_action(GUI::Action::create("About", [&](const GUI::Action&) {
-        GUI::AboutDialog::show("Help", Gfx::Bitmap::load_from_file("/res/icons/16x16/book.png"), window);
+        GUI::AboutDialog::show("Help", app_icon.bitmap_for_size(32), window);
     }));
     app_menu.add_separator();
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
+        GUI::Application::the()->quit();
     }));
 
     auto& go_menu = menubar->add_menu("Go");
     go_menu.add_action(*go_back_action);
     go_menu.add_action(*go_forward_action);
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     window->set_focused_widget(&tree_view);
     window->show();
 
-    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/book.png"));
-
-    return app.exec();
+    return app->exec();
 }

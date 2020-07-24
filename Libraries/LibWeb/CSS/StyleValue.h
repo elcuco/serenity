@@ -32,23 +32,77 @@
 #include <AK/StringView.h>
 #include <AK/URL.h>
 #include <AK/WeakPtr.h>
-#include <LibGfx/Color.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/Color.h>
 #include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/Forward.h>
+#include <LibWeb/Loader/ImageResource.h>
 
-namespace Web {
+namespace Web::CSS {
 
-class Document;
-
-namespace CSS {
 enum class ValueID {
     Invalid,
     VendorSpecificLink,
+    VendorSpecificPaletteDesktopBackground,
+    VendorSpecificPaletteActiveWindowBorder1,
+    VendorSpecificPaletteActiveWindowBorder2,
+    VendorSpecificPaletteActiveWindowTitle,
+    VendorSpecificPaletteInactiveWindowBorder1,
+    VendorSpecificPaletteInactiveWindowBorder2,
+    VendorSpecificPaletteInactiveWindowTitle,
+    VendorSpecificPaletteMovingWindowBorder1,
+    VendorSpecificPaletteMovingWindowBorder2,
+    VendorSpecificPaletteMovingWindowTitle,
+    VendorSpecificPaletteHighlightWindowBorder1,
+    VendorSpecificPaletteHighlightWindowBorder2,
+    VendorSpecificPaletteHighlightWindowTitle,
+    VendorSpecificPaletteMenuStripe,
+    VendorSpecificPaletteMenuBase,
+    VendorSpecificPaletteMenuBaseText,
+    VendorSpecificPaletteMenuSelection,
+    VendorSpecificPaletteMenuSelectionText,
+    VendorSpecificPaletteWindow,
+    VendorSpecificPaletteWindowText,
+    VendorSpecificPaletteButton,
+    VendorSpecificPaletteButtonText,
+    VendorSpecificPaletteBase,
+    VendorSpecificPaletteBaseText,
+    VendorSpecificPaletteThreedHighlight,
+    VendorSpecificPaletteThreedShadow1,
+    VendorSpecificPaletteThreedShadow2,
+    VendorSpecificPaletteHoverHighlight,
+    VendorSpecificPaletteSelection,
+    VendorSpecificPaletteSelectionText,
+    VendorSpecificPaletteInactiveSelection,
+    VendorSpecificPaletteInactiveSelectionText,
+    VendorSpecificPaletteRubberBandFill,
+    VendorSpecificPaletteRubberBandBorder,
+    VendorSpecificPaletteLink,
+    VendorSpecificPaletteActiveLink,
+    VendorSpecificPaletteVisitedLink,
+    VendorSpecificPaletteRuler,
+    VendorSpecificPaletteRulerBorder,
+    VendorSpecificPaletteRulerActiveText,
+    VendorSpecificPaletteRulerInactiveText,
+    VendorSpecificPaletteTextCursor,
+    VendorSpecificPaletteFocusOutline,
+    VendorSpecificPaletteSyntaxComment,
+    VendorSpecificPaletteSyntaxNumber,
+    VendorSpecificPaletteSyntaxString,
+    VendorSpecificPaletteSyntaxType,
+    VendorSpecificPaletteSyntaxPunctuation,
+    VendorSpecificPaletteSyntaxOperator,
+    VendorSpecificPaletteSyntaxKeyword,
+    VendorSpecificPaletteSyntaxControlKeyword,
+    VendorSpecificPaletteSyntaxIdentifier,
+    VendorSpecificPaletteSyntaxPreprocessorStatement,
+    VendorSpecificPaletteSyntaxPreprocessorValue,
     Center,
     Left,
     Right,
     Justify,
+    VendorSpecificCenter,
 };
 
 enum class Position {
@@ -58,7 +112,46 @@ enum class Position {
     Fixed,
     Sticky,
 };
+
+enum class TextAlign {
+    Left,
+    Center,
+    Right,
+    Justify,
+    VendorSpecificCenter,
+};
+
+enum class Display {
+    None,
+    Block,
+    Inline,
+    InlineBlock,
+    ListItem,
+    Table,
+    TableRow,
+    TableCell,
+    TableHeaderGroup,
+    TableRowGroup,
+    TableFooterGroup,
+};
+
+enum class WhiteSpace {
+    Normal,
+    Pre,
+    Nowrap,
+    PreLine,
+    PreWrap,
+};
+
+enum class Float {
+    None,
+    Left,
+    Right,
+};
+
 }
+
+namespace Web {
 
 class StyleValue : public RefCounted<StyleValue> {
 public:
@@ -88,7 +181,7 @@ public:
     bool is_position() const { return type() == Type::Position; }
 
     virtual String to_string() const = 0;
-    virtual Length to_length() const { return {}; }
+    virtual Length to_length() const { return Length::make_auto(); }
     virtual Color to_color(const Document&) const { return {}; }
 
     virtual bool is_auto() const { return false; }
@@ -106,7 +199,7 @@ public:
     {
         return adopt(*new StringStyleValue(string));
     }
-    virtual ~StringStyleValue() override {}
+    virtual ~StringStyleValue() override { }
 
     String to_string() const override { return m_string; }
 
@@ -126,7 +219,7 @@ public:
     {
         return adopt(*new LengthStyleValue(length));
     }
-    virtual ~LengthStyleValue() override {}
+    virtual ~LengthStyleValue() override { }
 
     virtual String to_string() const override { return m_length.to_string(); }
     virtual Length to_length() const override { return m_length; }
@@ -148,7 +241,7 @@ private:
 class InitialStyleValue final : public StyleValue {
 public:
     static NonnullRefPtr<InitialStyleValue> create() { return adopt(*new InitialStyleValue); }
-    virtual ~InitialStyleValue() override {}
+    virtual ~InitialStyleValue() override { }
 
     String to_string() const override { return "initial"; }
 
@@ -162,7 +255,7 @@ private:
 class InheritStyleValue final : public StyleValue {
 public:
     static NonnullRefPtr<InheritStyleValue> create() { return adopt(*new InheritStyleValue); }
-    virtual ~InheritStyleValue() override {}
+    virtual ~InheritStyleValue() override { }
 
     String to_string() const override { return "inherit"; }
 
@@ -179,7 +272,7 @@ public:
     {
         return adopt(*new ColorStyleValue(color));
     }
-    virtual ~ColorStyleValue() override {}
+    virtual ~ColorStyleValue() override { }
 
     Color color() const { return m_color; }
     String to_string() const override { return m_color.to_string(); }
@@ -201,7 +294,7 @@ public:
     {
         return adopt(*new IdentifierStyleValue(id));
     }
-    virtual ~IdentifierStyleValue() override {}
+    virtual ~IdentifierStyleValue() override { }
 
     CSS::ValueID id() const { return m_id; }
 
@@ -218,10 +311,12 @@ private:
     CSS::ValueID m_id { CSS::ValueID::Invalid };
 };
 
-class ImageStyleValue final : public StyleValue {
+class ImageStyleValue final
+    : public StyleValue
+    , public ImageResourceClient {
 public:
     static NonnullRefPtr<ImageStyleValue> create(const URL& url, Document& document) { return adopt(*new ImageStyleValue(url, document)); }
-    virtual ~ImageStyleValue() override {}
+    virtual ~ImageStyleValue() override { }
 
     String to_string() const override { return String::format("Image{%s}", m_url.to_string().characters()); }
 
@@ -229,6 +324,9 @@ public:
 
 private:
     ImageStyleValue(const URL&, Document&);
+
+    // ^ResourceClient
+    virtual void resource_did_load() override;
 
     URL m_url;
     WeakPtr<Document> m_document;

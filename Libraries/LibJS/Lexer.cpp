@@ -54,18 +54,22 @@ Lexer::Lexer(StringView source)
         s_keywords.set("delete", TokenType::Delete);
         s_keywords.set("do", TokenType::Do);
         s_keywords.set("else", TokenType::Else);
+        s_keywords.set("enum", TokenType::Enum);
+        s_keywords.set("export", TokenType::Export);
+        s_keywords.set("extends", TokenType::Extends);
         s_keywords.set("false", TokenType::BoolLiteral);
         s_keywords.set("finally", TokenType::Finally);
         s_keywords.set("for", TokenType::For);
         s_keywords.set("function", TokenType::Function);
         s_keywords.set("if", TokenType::If);
+        s_keywords.set("import", TokenType::Import);
         s_keywords.set("in", TokenType::In);
         s_keywords.set("instanceof", TokenType::Instanceof);
-        s_keywords.set("interface", TokenType::Interface);
         s_keywords.set("let", TokenType::Let);
         s_keywords.set("new", TokenType::New);
         s_keywords.set("null", TokenType::NullLiteral);
         s_keywords.set("return", TokenType::Return);
+        s_keywords.set("super", TokenType::Super);
         s_keywords.set("switch", TokenType::Switch);
         s_keywords.set("this", TokenType::This);
         s_keywords.set("throw", TokenType::Throw);
@@ -75,6 +79,7 @@ Lexer::Lexer(StringView source)
         s_keywords.set("var", TokenType::Var);
         s_keywords.set("void", TokenType::Void);
         s_keywords.set("while", TokenType::While);
+        s_keywords.set("with", TokenType::With);
         s_keywords.set("yield", TokenType::Yield);
     }
 
@@ -144,8 +149,12 @@ Lexer::Lexer(StringView source)
 
 void Lexer::consume()
 {
-    if (m_position >= m_source.length()) {
-        m_position = m_source.length() + 1;
+    if (m_position > m_source.length())
+        return;
+
+    if (m_position == m_source.length()) {
+        m_position++;
+        m_line_column++;
         m_current_char = EOF;
         return;
     }
@@ -235,11 +244,21 @@ bool Lexer::is_numeric_literal_start() const
     return isdigit(m_current_char) || (m_current_char == '.' && m_position < m_source.length() && isdigit(m_source[m_position]));
 }
 
-void Lexer::syntax_error(const char* msg)
+bool Lexer::slash_means_division() const
 {
-    m_has_errors = true;
-    if (m_log_errors)
-        fprintf(stderr, "Syntax Error: %s (line: %zu, column: %zu)\n", msg, m_line_number, m_line_column);
+    auto type = m_current_token.type();
+    return type == TokenType::BigIntLiteral
+           || type == TokenType::BoolLiteral
+           || type == TokenType::BracketClose
+           || type == TokenType::CurlyClose
+           || type == TokenType::Identifier
+           || type == TokenType::NullLiteral
+           || type == TokenType::NumericLiteral
+           || type == TokenType::ParenClose
+           || type == TokenType::RegexLiteral
+           || type == TokenType::StringLiteral
+           || type == TokenType::TemplateLiteralEnd
+           || type == TokenType::This;
 }
 
 Token Lexer::next()
@@ -275,7 +294,11 @@ Token Lexer::next()
     size_t value_start = m_position;
     auto token_type = TokenType::Invalid;
 
-    if (m_current_char == '`') {
+    if (m_current_token.type() == TokenType::RegexLiteral && !is_eof() && isalpha(m_current_char)) {
+        token_type = TokenType::RegexFlags;
+        while (!is_eof() && isalpha(m_current_char))
+            consume();
+    } else if (m_current_char == '`') {
         consume();
 
         if (!in_template) {
@@ -326,37 +349,36 @@ Token Lexer::next()
             token_type = it->value;
         }
     } else if (is_numeric_literal_start()) {
+        token_type = TokenType::NumericLiteral;
         if (m_current_char == '0') {
             consume();
             if (m_current_char == '.') {
                 // decimal
                 consume();
-                while (isdigit(m_current_char)) {
+                while (isdigit(m_current_char))
                     consume();
-                }
-                if (m_current_char == 'e' || m_current_char == 'E') {
+                if (m_current_char == 'e' || m_current_char == 'E')
                     consume_exponent();
-                }
             } else if (m_current_char == 'e' || m_current_char == 'E') {
                 consume_exponent();
             } else if (m_current_char == 'o' || m_current_char == 'O') {
                 // octal
                 consume();
-                while (m_current_char >= '0' && m_current_char <= '7') {
+                while (m_current_char >= '0' && m_current_char <= '7')
                     consume();
-                }
             } else if (m_current_char == 'b' || m_current_char == 'B') {
                 // binary
                 consume();
-                while (m_current_char == '0' || m_current_char == '1') {
+                while (m_current_char == '0' || m_current_char == '1')
                     consume();
-                }
             } else if (m_current_char == 'x' || m_current_char == 'X') {
                 // hexadecimal
                 consume();
-                while (isxdigit(m_current_char)) {
+                while (isxdigit(m_current_char))
                     consume();
-                }
+            } else if (m_current_char == 'n') {
+                consume();
+                token_type = TokenType::BigIntLiteral;
             } else if (isdigit(m_current_char)) {
                 // octal without 'O' prefix. Forbidden in 'strict mode'
                 // FIXME: We need to make sure this produces a syntax error when in strict mode
@@ -366,20 +388,21 @@ Token Lexer::next()
             }
         } else {
             // 1...9 or period
-            while (isdigit(m_current_char)) {
+            while (isdigit(m_current_char))
                 consume();
-            }
-            if (m_current_char == '.') {
+            if (m_current_char == 'n') {
                 consume();
-                while (isdigit(m_current_char)) {
+                token_type = TokenType::BigIntLiteral;
+            } else {
+                if (m_current_char == '.') {
                     consume();
+                    while (isdigit(m_current_char))
+                        consume();
                 }
-            }
-            if (m_current_char == 'e' || m_current_char == 'E') {
-                consume_exponent();
+                if (m_current_char == 'e' || m_current_char == 'E')
+                    consume_exponent();
             }
         }
-        token_type = TokenType::NumericLiteral;
     } else if (m_current_char == '"' || m_current_char == '\'') {
         char stop_char = m_current_char;
         consume();
@@ -390,11 +413,33 @@ Token Lexer::next()
             consume();
         }
         if (m_current_char != stop_char) {
-            syntax_error("unterminated string literal");
             token_type = TokenType::UnterminatedStringLiteral;
         } else {
             consume();
             token_type = TokenType::StringLiteral;
+        }
+    } else if (m_current_char == '/' && !slash_means_division()) {
+        consume();
+        token_type = TokenType::RegexLiteral;
+
+        while (!is_eof()) {
+            if (m_current_char == '[') {
+                m_regex_is_in_character_class = true;
+            } else if (m_current_char == ']') {
+                m_regex_is_in_character_class = false;
+            } else if (!m_regex_is_in_character_class && m_current_char == '/') {
+                break;
+            }
+
+            if (match('\\', '/') || match('\\', '[') || match('\\', '\\') || (m_regex_is_in_character_class && match('\\', ']')))
+                consume();
+            consume();
+        }
+
+        if (is_eof()) {
+            token_type = TokenType::UnterminatedRegexLiteral;
+        } else {
+            consume();
         }
     } else if (m_current_char == EOF) {
         token_type = TokenType::Eof;

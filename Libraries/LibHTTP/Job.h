@@ -27,6 +27,7 @@
 #pragma once
 
 #include <AK/HashMap.h>
+#include <AK/Optional.h>
 #include <LibCore/NetworkJob.h>
 #include <LibCore/TCPSocket.h>
 #include <LibHTTP/HttpRequest.h>
@@ -50,8 +51,7 @@ protected:
     void on_socket_connected();
     virtual void register_on_ready_to_read(Function<void()>) = 0;
     virtual void register_on_ready_to_write(Function<void()>) = 0;
-    // FIXME: I want const but Core::IODevice::can_read_line populates a cache with this
-    virtual bool can_read_line() = 0;
+    virtual bool can_read_line() const = 0;
     virtual ByteBuffer read_line(size_t) = 0;
     virtual bool can_read() const = 0;
     virtual ByteBuffer receive(size_t) = 0;
@@ -66,15 +66,18 @@ protected:
         InHeaders,
         InBody,
         Finished,
+        AfterChunkedEncodingTrailer,
     };
 
     HttpRequest m_request;
     State m_state { State::InStatus };
     int m_code { -1 };
-    HashMap<String, String> m_headers;
+    HashMap<String, String, CaseInsensitiveStringTraits> m_headers;
     Vector<ByteBuffer> m_received_buffers;
     size_t m_received_size { 0 };
     bool m_sent_data { 0 };
+    Optional<ssize_t> m_current_chunk_remaining_size;
+    Optional<size_t> m_current_chunk_total_size;
 };
 
 }

@@ -35,7 +35,7 @@ class LineBoxFragment;
 
 class LayoutText : public LayoutNode {
 public:
-    explicit LayoutText(const Text&);
+    LayoutText(Document&, const Text&);
     virtual ~LayoutText() override;
 
     const Text& node() const { return static_cast<const Text&>(*LayoutNode::node()); }
@@ -46,17 +46,17 @@ public:
     virtual const char* class_name() const override { return "LayoutText"; }
     virtual bool is_text() const final { return true; }
 
-    void render_fragment(RenderingContext&, const LineBoxFragment&) const;
+    void paint_fragment(PaintContext&, const LineBoxFragment&) const;
 
-    virtual void split_into_lines(LayoutBlock& container) override;
+    virtual void split_into_lines(LayoutBlock& container, LayoutMode) override;
 
-    const StyleProperties& style() const { return parent()->style(); }
+    const StyleProperties& specified_style() const { return parent()->specified_style(); }
 
 private:
-    void split_preformatted_into_lines(LayoutBlock& container);
+    void split_into_lines_by_rules(LayoutBlock& container, LayoutMode, bool do_collapse, bool do_wrap_lines, bool do_wrap_breaks);
 
     template<typename Callback>
-    void for_each_word(Callback) const;
+    void for_each_chunk(Callback, LayoutMode, bool do_wrap_lines, bool do_wrap_breaks) const;
 
     String m_text_for_rendering;
 };

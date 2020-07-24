@@ -32,23 +32,30 @@
 
 namespace JS {
 
-BooleanPrototype::BooleanPrototype()
-    : BooleanObject(false, *interpreter().global_object().object_prototype())
+BooleanPrototype::BooleanPrototype(GlobalObject& global_object)
+    : BooleanObject(false, *global_object.object_prototype())
 {
-    put_native_function("toString", to_string, 0, Attribute::Writable | Attribute::Configurable);
-    put_native_function("valueOf", value_of, 0, Attribute::Writable | Attribute::Configurable);
 }
 
-BooleanPrototype::~BooleanPrototype() { }
-
-Value BooleanPrototype::to_string(Interpreter& interpreter)
+void BooleanPrototype::initialize(GlobalObject& global_object)
 {
-    auto this_object = interpreter.this_value();
+    BooleanObject::initialize(global_object);
+    define_native_function("toString", to_string, 0, Attribute::Writable | Attribute::Configurable);
+    define_native_function("valueOf", value_of, 0, Attribute::Writable | Attribute::Configurable);
+}
+
+BooleanPrototype::~BooleanPrototype()
+{
+}
+
+JS_DEFINE_NATIVE_FUNCTION(BooleanPrototype::to_string)
+{
+    auto this_object = interpreter.this_value(global_object);
     if (this_object.is_boolean()) {
         return js_string(interpreter.heap(), this_object.as_bool() ? "true" : "false");
     }
-    if (!this_object.is_object() || !this_object.as_object().is_boolean()) {
-        interpreter.throw_exception<TypeError>("Not a Boolean");
+    if (!this_object.is_object() || !this_object.as_object().is_boolean_object()) {
+        interpreter.throw_exception<TypeError>(ErrorType::NotA, "Boolean");
         return {};
     }
 
@@ -56,14 +63,14 @@ Value BooleanPrototype::to_string(Interpreter& interpreter)
     return js_string(interpreter.heap(), bool_value ? "true" : "false");
 }
 
-Value BooleanPrototype::value_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(BooleanPrototype::value_of)
 {
-    auto this_object = interpreter.this_value();
+    auto this_object = interpreter.this_value(global_object);
     if (this_object.is_boolean()) {
         return this_object;
     }
-    if (!this_object.is_object() || !this_object.as_object().is_boolean()) {
-        interpreter.throw_exception<TypeError>("Not a Boolean");
+    if (!this_object.is_object() || !this_object.as_object().is_boolean_object()) {
+        interpreter.throw_exception<TypeError>(ErrorType::NotA, "Boolean");
         return {};
     }
 

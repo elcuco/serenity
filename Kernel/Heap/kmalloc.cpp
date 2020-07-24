@@ -38,7 +38,8 @@
 #include <Kernel/KSyms.h>
 #include <Kernel/Process.h>
 #include <Kernel/Scheduler.h>
-#include <LibBareMetal/StdLib.h>
+#include <Kernel/SpinLock.h>
+#include <Kernel/StdLib.h>
 
 #define SANITIZE_KMALLOC
 
@@ -56,25 +57,27 @@ struct AllocationHeader {
 
 static u8 alloc_map[POOL_SIZE / CHUNK_SIZE / 8];
 
-volatile size_t sum_alloc = 0;
-volatile size_t sum_free = POOL_SIZE;
-volatile size_t kmalloc_sum_eternal = 0;
-
-u32 g_kmalloc_call_count;
-u32 g_kfree_call_count;
+size_t g_kmalloc_bytes_allocated = 0;
+size_t g_kmalloc_bytes_free = POOL_SIZE;
+size_t g_kmalloc_bytes_eternal = 0;
+size_t g_kmalloc_call_count;
+size_t g_kfree_call_count;
 bool g_dump_kmalloc_stacks;
 
 static u8* s_next_eternal_ptr;
 static u8* s_end_of_eternal_range;
 
+static RecursiveSpinLock s_lock; // needs to be recursive because of dump_backtrace()
+
 void kmalloc_init()
 {
     memset(&alloc_map, 0, sizeof(alloc_map));
     memset((void*)BASE_PHYSICAL, 0, POOL_SIZE);
+    s_lock.initialize();
 
-    kmalloc_sum_eternal = 0;
-    sum_alloc = 0;
-    sum_free = POOL_SIZE;
+    g_kmalloc_bytes_eternal = 0;
+    g_kmalloc_bytes_allocated = 0;
+    g_kmalloc_bytes_free = POOL_SIZE;
 
     s_next_eternal_ptr = (u8*)ETERNAL_BASE_PHYSICAL;
     s_end_of_eternal_range = s_next_eternal_ptr + ETERNAL_RANGE_SIZE;
@@ -82,10 +85,11 @@ void kmalloc_init()
 
 void* kmalloc_eternal(size_t size)
 {
+    ScopedSpinLock lock(s_lock);
     void* ptr = s_next_eternal_ptr;
     s_next_eternal_ptr += size;
     ASSERT(s_next_eternal_ptr < s_end_of_eternal_range);
-    kmalloc_sum_eternal += size;
+    g_kmalloc_bytes_eternal += size;
     return ptr;
 }
 
@@ -120,8 +124,8 @@ inline void* kmalloc_allocate(size_t first_chunk, size_t chunks_needed)
     Bitmap bitmap_wrapper = Bitmap::wrap(alloc_map, POOL_SIZE / CHUNK_SIZE);
     bitmap_wrapper.set_range(first_chunk, chunks_needed, true);
 
-    sum_alloc += a->allocation_size_in_chunks * CHUNK_SIZE;
-    sum_free -= a->allocation_size_in_chunks * CHUNK_SIZE;
+    g_kmalloc_bytes_allocated += a->allocation_size_in_chunks * CHUNK_SIZE;
+    g_kmalloc_bytes_free -= a->allocation_size_in_chunks * CHUNK_SIZE;
 #ifdef SANITIZE_KMALLOC
     memset(ptr, KMALLOC_SCRUB_BYTE, (a->allocation_size_in_chunks * CHUNK_SIZE) - sizeof(AllocationHeader));
 #endif
@@ -130,7 +134,7 @@ inline void* kmalloc_allocate(size_t first_chunk, size_t chunks_needed)
 
 void* kmalloc_impl(size_t size)
 {
-    Kernel::InterruptDisabler disabler;
+    ScopedSpinLock lock(s_lock);
     ++g_kmalloc_call_count;
 
     if (g_dump_kmalloc_stacks && Kernel::g_kernel_symbols_available) {
@@ -141,10 +145,10 @@ void* kmalloc_impl(size_t size)
     // We need space for the AllocationHeader at the head of the block.
     size_t real_size = size + sizeof(AllocationHeader);
 
-    if (sum_free < real_size) {
+    if (g_kmalloc_bytes_free < real_size) {
         Kernel::dump_backtrace();
-        klog() << "kmalloc(): PANIC! Out of memory (sucks, dude)\nsum_free=" << sum_free << ", real_size=" << real_size;
-        Kernel::hang();
+        klog() << "kmalloc(): PANIC! Out of memory\nsum_free=" << g_kmalloc_bytes_free << ", real_size=" << real_size;
+        Processor::halt();
     }
 
     size_t chunks_needed = (real_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -163,18 +167,14 @@ void* kmalloc_impl(size_t size)
     if (!first_chunk.has_value()) {
         klog() << "kmalloc(): PANIC! Out of memory (no suitable block for size " << size << ")";
         Kernel::dump_backtrace();
-        Kernel::hang();
+        Processor::halt();
     }
 
     return kmalloc_allocate(first_chunk.value(), chunks_needed);
 }
 
-void kfree(void* ptr)
+static inline void kfree_impl(void* ptr)
 {
-    if (!ptr)
-        return;
-
-    Kernel::InterruptDisabler disabler;
     ++g_kfree_call_count;
 
     auto* a = (AllocationHeader*)((((u8*)ptr) - sizeof(AllocationHeader)));
@@ -183,12 +183,21 @@ void kfree(void* ptr)
     Bitmap bitmap_wrapper = Bitmap::wrap(alloc_map, POOL_SIZE / CHUNK_SIZE);
     bitmap_wrapper.set_range(start, a->allocation_size_in_chunks, false);
 
-    sum_alloc -= a->allocation_size_in_chunks * CHUNK_SIZE;
-    sum_free += a->allocation_size_in_chunks * CHUNK_SIZE;
+    g_kmalloc_bytes_allocated -= a->allocation_size_in_chunks * CHUNK_SIZE;
+    g_kmalloc_bytes_free += a->allocation_size_in_chunks * CHUNK_SIZE;
 
 #ifdef SANITIZE_KMALLOC
     memset(a, KFREE_SCRUB_BYTE, a->allocation_size_in_chunks * CHUNK_SIZE);
 #endif
+}
+
+void kfree(void* ptr)
+{
+    if (!ptr)
+        return;
+
+    ScopedSpinLock lock(s_lock);
+    kfree_impl(ptr);
 }
 
 void* krealloc(void* ptr, size_t new_size)
@@ -196,7 +205,7 @@ void* krealloc(void* ptr, size_t new_size)
     if (!ptr)
         return kmalloc(new_size);
 
-    Kernel::InterruptDisabler disabler;
+    ScopedSpinLock lock(s_lock);
 
     auto* a = (AllocationHeader*)((((u8*)ptr) - sizeof(AllocationHeader)));
     size_t old_size = a->allocation_size_in_chunks * CHUNK_SIZE;
@@ -206,7 +215,7 @@ void* krealloc(void* ptr, size_t new_size)
 
     auto* new_ptr = kmalloc(new_size);
     memcpy(new_ptr, ptr, min(old_size, new_size));
-    kfree(ptr);
+    kfree_impl(ptr);
     return new_ptr;
 }
 

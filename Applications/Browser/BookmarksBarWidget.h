@@ -27,11 +27,13 @@
 #pragma once
 
 #include <LibGUI/Forward.h>
+#include <LibGUI/Model.h>
 #include <LibGUI/Widget.h>
 
 namespace Browser {
 
-class BookmarksBarWidget final : public GUI::Widget {
+class BookmarksBarWidget final : public GUI::Widget
+    , private GUI::ModelClient {
     C_OBJECT(BookmarksBarWidget)
 public:
     static BookmarksBarWidget& the();
@@ -42,7 +44,7 @@ public:
     GUI::Model* model() { return m_model.ptr(); }
     const GUI::Model* model() const { return m_model.ptr(); }
 
-    Function<void(const String&, const String&)> on_bookmark_click;
+    Function<void(const String& url, unsigned modifiers)> on_bookmark_click;
     Function<void(const String&, const String&)> on_bookmark_hover;
 
     bool contains_bookmark(const String& url);
@@ -52,7 +54,7 @@ public:
 private:
     BookmarksBarWidget(const String&, bool enabled);
 
-    virtual void did_update_model();
+    virtual void on_model_update(unsigned) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
 
     void update_content_size();
@@ -61,6 +63,9 @@ private:
     RefPtr<GUI::Button> m_additional;
     RefPtr<GUI::Widget> m_separator;
     RefPtr<GUI::Menu> m_additional_menu;
+
+    RefPtr<GUI::Menu> m_context_menu;
+    String m_context_menu_url;
 
     NonnullRefPtrVector<GUI::Button> m_bookmarks;
 

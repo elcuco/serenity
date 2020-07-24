@@ -65,12 +65,13 @@ int main(int argc, char** argv)
     if (argc != 2)
         print_usage_and_exit();
 
-    bool ok;
-    pid_t pid = String(argv[1]).to_int(ok);
-    if (!ok)
+    auto pid_opt = String(argv[1]).to_int();
+    if (!pid_opt.has_value())
         print_usage_and_exit();
 
-    GUI::Application app(argc, argv);
+    pid_t pid = pid_opt.value();
+
+    auto app = GUI::Application::construct(argc, argv);
 
     auto window = GUI::Window::construct();
     window->set_title("Inspector");
@@ -93,16 +94,15 @@ int main(int argc, char** argv)
     tree_view.set_model(remote_process.object_graph_model());
     tree_view.set_activates_on_selection(true);
 
-    auto& properties_table_view = splitter.add<GUI::TableView>();
-    properties_table_view.set_size_columns_to_fit_content(true);
-    properties_table_view.set_editable(true);
-    properties_table_view.aid_create_editing_delegate = [](auto&) {
+    auto& properties_tree_view = splitter.add<GUI::TreeView>();
+    properties_tree_view.set_editable(true);
+    properties_tree_view.aid_create_editing_delegate = [](auto&) {
         return make<GUI::StringModelEditingDelegate>();
     };
 
     tree_view.on_activation = [&](auto& index) {
         auto* remote_object = static_cast<RemoteObject*>(index.internal_data());
-        properties_table_view.set_model(remote_object->property_model());
+        properties_tree_view.set_model(remote_object->property_model());
         remote_process.set_inspected_object(remote_object->address);
     };
 
@@ -114,5 +114,5 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    return app.exec();
+    return app->exec();
 }

@@ -28,7 +28,6 @@
 
 #include <AK/FlyString.h>
 #include <AK/Vector.h>
-#include <LibWeb/CSS/Specificity.h>
 
 namespace Web {
 
@@ -47,12 +46,14 @@ public:
         enum class PseudoClass {
             None,
             Link,
+            Visited,
             Hover,
             Focus,
             FirstChild,
             LastChild,
             OnlyChild,
             Empty,
+            Root,
         };
         PseudoClass pseudo_class { PseudoClass::None };
 
@@ -62,6 +63,7 @@ public:
             None,
             HasAttribute,
             ExactValueMatch,
+            Contains,
         };
 
         AttributeMatchType attribute_match_type { AttributeMatchType::None };
@@ -88,7 +90,7 @@ public:
 
     const Vector<ComplexSelector>& complex_selectors() const { return m_complex_selectors; }
 
-    Specificity specificity() const;
+    u32 specificity() const;
 
 private:
     Vector<ComplexSelector> m_complex_selectors;

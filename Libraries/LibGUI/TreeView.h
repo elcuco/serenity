@@ -41,6 +41,11 @@ public:
     virtual int item_count() const override;
     virtual void toggle_index(const ModelIndex&) override;
 
+    void expand_tree(const ModelIndex& root = {});
+    void collapse_tree(const ModelIndex& root = {});
+
+    Function<void(const ModelIndex&, const bool)> on_toggle;
+
 protected:
     TreeView();
 
@@ -51,7 +56,7 @@ protected:
     virtual void did_update_model(unsigned flags) override;
 
 private:
-    virtual ModelIndex index_at_event_position(const Gfx::Point&, bool& is_toggle) const override;
+    virtual ModelIndex index_at_event_position(const Gfx::IntPoint&, bool& is_toggle) const override;
 
     int item_height() const { return 16; }
     int max_item_width() const { return frame_inner_rect().width(); }
@@ -69,6 +74,7 @@ private:
     struct MetadataForIndex;
 
     MetadataForIndex& ensure_metadata_for_index(const ModelIndex&) const;
+    void set_open_state_of_all_in_subtree(const ModelIndex& root, bool open);
 
     mutable HashMap<void*, NonnullOwnPtr<MetadataForIndex>> m_view_metadata;
 

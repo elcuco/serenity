@@ -27,17 +27,23 @@
 #pragma once
 
 #include <AK/String.h>
+#include <LibWeb/Forward.h>
 
 namespace Web {
 
 class Length {
 public:
     enum class Type {
+        Undefined,
+        Percentage,
         Auto,
-        Absolute,
+        Px,
+        Pt,
+        Em,
+        Rem,
     };
 
-    Length() {}
+    Length() { }
     Length(int value, Type type)
         : m_type(type)
         , m_value(value)
@@ -48,29 +54,70 @@ public:
         , m_value(value)
     {
     }
-    ~Length() {}
 
+    static Length make_auto() { return Length(0, Type::Auto); }
+    static Length make_px(float value) { return Length(value, Type::Px); }
+
+    Length resolved(const Length& fallback_for_undefined, const LayoutNode& layout_node, float reference_for_percent) const
+    {
+        if (is_undefined())
+            return fallback_for_undefined;
+        if (is_percentage())
+            return make_px(raw_value() / 100.0 * reference_for_percent);
+        if (is_relative())
+            return make_px(to_px(layout_node));
+        return *this;
+    }
+
+    Length resolved_or_auto(const LayoutNode& layout_node, float reference_for_percent) const
+    {
+        return resolved(make_auto(), layout_node, reference_for_percent);
+    }
+
+    Length resolved_or_zero(const LayoutNode& layout_node, float reference_for_percent) const
+    {
+        return resolved(make_px(0), layout_node, reference_for_percent);
+    }
+
+    bool is_undefined_or_auto() const { return m_type == Type::Undefined || m_type == Type::Auto; }
+    bool is_undefined() const { return m_type == Type::Undefined; }
+    bool is_percentage() const { return m_type == Type::Percentage; }
     bool is_auto() const { return m_type == Type::Auto; }
-    bool is_absolute() const { return m_type == Type::Absolute; }
+    bool is_absolute() const { return m_type == Type::Px || m_type == Type::Pt; }
+    bool is_relative() const { return m_type == Type::Em || m_type == Type::Rem; }
 
-    float value() const { return m_value; }
+    float raw_value() const { return m_value; }
+    ALWAYS_INLINE float to_px(const LayoutNode& layout_node) const
+    {
+        if (is_relative())
+            return relative_length_to_px(layout_node);
+        switch (m_type) {
+        case Type::Auto:
+            return 0;
+        case Type::Px:
+            return m_value;
+        case Type::Pt:
+            return m_value * 1.33333333f;
+        case Type::Undefined:
+        case Type::Percentage:
+        default:
+            ASSERT_NOT_REACHED();
+        }
+    }
 
     String to_string() const
     {
         if (is_auto())
-            return "[Length/auto]";
-        return String::format("%g [Length/px]", m_value);
-    }
-
-    float to_px() const
-    {
-        if (is_auto())
-            return 0;
-        return m_value;
+            return "[auto]";
+        return String::format("[%g %s]", m_value, unit_name());
     }
 
 private:
-    Type m_type { Type::Auto };
+    float relative_length_to_px(const LayoutNode&) const;
+
+    const char* unit_name() const;
+
+    Type m_type { Type::Undefined };
     float m_value { 0 };
 };
 

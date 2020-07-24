@@ -48,7 +48,7 @@ void QSWidget::clear()
     m_bitmap = nullptr;
     m_path = {};
 
-    on_scale_change(100);
+    set_scale(100);
     update();
 }
 
@@ -84,7 +84,7 @@ void QSWidget::navigate(Directions direction)
         Core::DirIterator iterator(current_dir, Core::DirIterator::Flags::SkipDots);
         while (iterator.has_next()) {
             String file = iterator.next_full_path();
-            if (!file.ends_with(".png") && !file.ends_with(".gif")) // TODO: Find a batter way to filter supported images.
+            if (!Gfx::Bitmap::is_path_a_supported_image_format(file))
                 continue;
             m_files_in_same_dir.append(file);
         }
@@ -98,14 +98,14 @@ void QSWidget::navigate(Directions direction)
     size_t index = current_index.value();
     if (direction == Directions::Back) {
         if (index == 0) {
-            GUI::MessageBox::show(String::format("This is the first file.", index), "Cannot open image", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+            GUI::MessageBox::show(window(), String::format("This is the first file.", index), "Cannot open image", GUI::MessageBox::Type::Error);
             return;
         }
 
         index--;
     } else if (direction == Directions::Forward) {
         if (index == m_files_in_same_dir.size() - 1) {
-            GUI::MessageBox::show(String::format("This is the last file.", index), "Cannot open image", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+            GUI::MessageBox::show(window(), String::format("This is the last file.", index), "Cannot open image", GUI::MessageBox::Type::Error);
             return;
         }
 
@@ -121,13 +121,33 @@ void QSWidget::navigate(Directions direction)
 
 void QSWidget::set_scale(int scale)
 {
+    if (m_bitmap.is_null())
+        return;
+
+    if (m_scale == scale) {
+        update();
+        return;
+    }
 
     if (scale < 10)
         scale = 10;
     if (scale > 1000)
         scale = 1000;
 
+    if (scale == 100)
+        m_pan_origin = { 0, 0 };
+
     m_scale = scale;
+    float scale_factor = (float)m_scale / 100.0f;
+
+    Gfx::IntSize new_size;
+    new_size.set_width(m_bitmap->width() * scale_factor);
+    new_size.set_height(m_bitmap->height() * scale_factor);
+    m_bitmap_rect.set_size(new_size);
+
+    if (on_scale_change)
+        on_scale_change(m_scale, m_bitmap_rect);
+
     relayout();
 }
 
@@ -137,19 +157,12 @@ void QSWidget::relayout()
         return;
 
     float scale_factor = (float)m_scale / 100.0f;
+    Gfx::IntSize new_size = m_bitmap_rect.size();
 
-    Gfx::Size new_size;
-    new_size.set_width(m_bitmap->width() * scale_factor);
-    new_size.set_height(m_bitmap->height() * scale_factor);
-    m_bitmap_rect.set_size(new_size);
-
-    Gfx::Point new_location;
+    Gfx::IntPoint new_location;
     new_location.set_x((width() / 2) - (new_size.width() / 2) - (m_pan_origin.x() * scale_factor));
     new_location.set_y((height() / 2) - (new_size.height() / 2) - (m_pan_origin.y() * scale_factor));
     m_bitmap_rect.set_location(new_location);
-
-    if (on_scale_change)
-        on_scale_change(m_scale);
 
     update();
 }
@@ -158,6 +171,11 @@ void QSWidget::resize_event(GUI::ResizeEvent& event)
 {
     relayout();
     GUI::Widget::resize_event(event);
+}
+
+void QSWidget::doubleclick_event(GUI::MouseEvent&)
+{
+    on_doubleclick();
 }
 
 void QSWidget::paint_event(GUI::PaintEvent& event)
@@ -203,16 +221,18 @@ void QSWidget::mousemove_event(GUI::MouseEvent& event)
 
 void QSWidget::mousewheel_event(GUI::MouseEvent& event)
 {
-    auto old_scale = m_scale;
+    int new_scale = m_scale - event.wheel_delta() * 10;
+    if (new_scale < 10)
+        new_scale = 10;
+    if (new_scale > 1000)
+        new_scale = 1000;
+
+    if (new_scale == m_scale) {
+        return;
+    }
+
     auto old_scale_factor = (float)m_scale / 100.0f;
-
-    m_scale += -event.wheel_delta() * 10;
-    if (m_scale < 10)
-        m_scale = 10;
-    if (m_scale > 1000)
-        m_scale = 1000;
-
-    auto new_scale_factor = (float)m_scale / 100.0f;
+    auto new_scale_factor = (float)new_scale / 100.0f;
 
     auto focus_point = Gfx::FloatPoint(
         m_pan_origin.x() - ((float)event.x() - (float)width() / 2.0) / old_scale_factor,
@@ -222,29 +242,21 @@ void QSWidget::mousewheel_event(GUI::MouseEvent& event)
         focus_point.x() - new_scale_factor / old_scale_factor * (focus_point.x() - m_pan_origin.x()),
         focus_point.y() - new_scale_factor / old_scale_factor * (focus_point.y() - m_pan_origin.y()));
 
-    if (old_scale != m_scale) {
-        relayout();
-    }
+    set_scale(new_scale);
 }
 
 void QSWidget::load_from_file(const String& path)
 {
     auto bitmap = Gfx::Bitmap::load_from_file(path);
     if (!bitmap) {
-        GUI::MessageBox::show(String::format("Failed to open %s", path.characters()), "Cannot open image", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+        GUI::MessageBox::show(window(), String::format("Failed to open %s", path.characters()), "Cannot open image", GUI::MessageBox::Type::Error);
         return;
     }
 
     m_path = path;
     m_bitmap = bitmap;
-    m_scale = 100;
-    m_pan_origin = { 0, 0 };
-
-    resize_window();
-
-    if (on_scale_change)
-        on_scale_change(m_scale);
-    relayout();
+    m_scale = -1;
+    set_scale(100);
 }
 
 void QSWidget::drop_event(GUI::DropEvent& event)

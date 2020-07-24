@@ -26,7 +26,10 @@
 
 #pragma once
 
+#include <AK/URL.h>
 #include <AK/Vector.h>
+#include <LibDesktop/Launcher.h>
+#include <LibGUI/Action.h>
 #include <LibGUI/ColumnsView.h>
 #include <LibGUI/FileSystemModel.h>
 #include <LibGUI/IconView.h>
@@ -34,7 +37,22 @@
 #include <LibGUI/TableView.h>
 #include <sys/stat.h>
 
-class DirectoryView final : public GUI::StackWidget {
+class LauncherHandler: public RefCounted<LauncherHandler> {
+public:
+    LauncherHandler(const NonnullRefPtr<Desktop::Launcher::Details>& details)
+        : m_details(details)
+    {
+    }
+
+    NonnullRefPtr<GUI::Action> create_launch_action(Function<void(const LauncherHandler&)>);
+    const Desktop::Launcher::Details& details() const { return *m_details; }
+
+private:
+    NonnullRefPtr<Desktop::Launcher::Details> m_details;
+};
+
+class DirectoryView final : public GUI::StackWidget
+    , private GUI::ModelClient {
     C_OBJECT(DirectoryView)
 public:
     virtual ~DirectoryView() override;
@@ -46,9 +64,13 @@ public:
     void open_next_directory();
     int path_history_size() const { return m_path_history.size(); }
     int path_history_position() const { return m_path_history_position; }
+    static RefPtr<LauncherHandler> get_default_launch_handler(const NonnullRefPtrVector<LauncherHandler>& handlers);
+    NonnullRefPtrVector<LauncherHandler> get_launch_handlers(const URL& url);
+    NonnullRefPtrVector<LauncherHandler> get_launch_handlers(const String& path);
 
     void refresh();
 
+    Function<void(const AK::URL&, const LauncherHandler&)> on_launch;
     Function<void(const StringView&)> on_path_change;
     Function<void(GUI::AbstractView&)> on_selection_change;
     Function<void(const GUI::AbstractView&, const GUI::ModelIndex&, const GUI::ContextMenuEvent&)> on_context_menu_request;
@@ -94,7 +116,10 @@ private:
     DirectoryView();
     const GUI::FileSystemModel& model() const { return *m_model; }
 
+    virtual void on_model_update(unsigned) override;
+
     void handle_activation(const GUI::ModelIndex&);
+    GUI::ModelIndex map_table_view_index(const GUI::ModelIndex&) const;
 
     void set_status_message(const StringView&);
     void update_statusbar();

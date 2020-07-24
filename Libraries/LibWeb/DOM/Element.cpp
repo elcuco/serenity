@@ -39,8 +39,9 @@
 #include <LibWeb/Layout/LayoutTable.h>
 #include <LibWeb/Layout/LayoutTableCell.h>
 #include <LibWeb/Layout/LayoutTableRow.h>
+#include <LibWeb/Layout/LayoutTableRowGroup.h>
 #include <LibWeb/Layout/LayoutTreeBuilder.h>
-#include <LibWeb/Parser/HTMLParser.h>
+#include <LibWeb/Parser/HTMLDocumentParser.h>
 
 namespace Web {
 
@@ -97,51 +98,64 @@ void Element::set_attributes(Vector<Attribute>&& attributes)
         parse_attribute(attribute.name(), attribute.value());
 }
 
-bool Element::has_class(const StringView& class_name) const
+bool Element::has_class(const FlyString& class_name) const
 {
-    auto value = attribute("class");
-    if (value.is_empty())
-        return false;
-    auto parts = value.split_view(' ');
-    for (auto& part : parts) {
-        if (part == class_name)
+    for (auto& class_ : m_classes) {
+        if (class_ == class_name)
             return true;
     }
     return false;
 }
 
-RefPtr<LayoutNode> Element::create_layout_node(const StyleProperties* parent_style) const
+RefPtr<LayoutNode> Element::create_layout_node(const StyleProperties* parent_style)
 {
     auto style = document().style_resolver().resolve_style(*this, parent_style);
     const_cast<Element&>(*this).m_resolved_style = style;
-    auto display = style->string_or_fallback(CSS::PropertyID::Display, "inline");
+    auto display = style->display();
 
-    if (display == "none")
+    if (display == CSS::Display::None)
         return nullptr;
-    if (display == "block")
-        return adopt(*new LayoutBlock(this, move(style)));
-    if (display == "inline")
-        return adopt(*new LayoutInline(*this, move(style)));
-    if (display == "list-item")
-        return adopt(*new LayoutListItem(*this, move(style)));
-    if (display == "table")
-        return adopt(*new LayoutTable(*this, move(style)));
-    if (display == "table-row")
-        return adopt(*new LayoutTableRow(*this, move(style)));
-    if (display == "table-cell")
-        return adopt(*new LayoutTableCell(*this, move(style)));
-    if (display == "inline-block") {
-        auto inline_block = adopt(*new LayoutBlock(this, move(style)));
+
+    if (local_name() == "noscript" && document().is_scripting_enabled())
+        return nullptr;
+
+    if (display == CSS::Display::Block)
+        return adopt(*new LayoutBlock(document(), this, move(style)));
+
+    if (display == CSS::Display::Inline) {
+        if (style->float_().value_or(CSS::Float::None) != CSS::Float::None)
+            return adopt(*new LayoutBlock(document(), this, move(style)));
+        return adopt(*new LayoutInline(document(), *this, move(style)));
+    }
+
+    if (display == CSS::Display::ListItem)
+        return adopt(*new LayoutListItem(document(), *this, move(style)));
+    if (display == CSS::Display::Table)
+        return adopt(*new LayoutTable(document(), *this, move(style)));
+    if (display == CSS::Display::TableRow)
+        return adopt(*new LayoutTableRow(document(), *this, move(style)));
+    if (display == CSS::Display::TableCell)
+        return adopt(*new LayoutTableCell(document(), *this, move(style)));
+    if (display == CSS::Display::TableRowGroup || display == CSS::Display::TableHeaderGroup || display == CSS::Display::TableFooterGroup)
+        return adopt(*new LayoutTableRowGroup(document(), *this, move(style)));
+    if (display == CSS::Display::InlineBlock) {
+        auto inline_block = adopt(*new LayoutBlock(document(), this, move(style)));
         inline_block->set_inline(true);
         return inline_block;
     }
-
-    dbg() << "Unknown display type: _" << display << "_";
-    return adopt(*new LayoutInline(*this, move(style)));
+    ASSERT_NOT_REACHED();
 }
 
-void Element::parse_attribute(const FlyString&, const String&)
+void Element::parse_attribute(const FlyString& name, const String& value)
 {
+    if (name == "class") {
+        auto new_classes = value.split_view(' ');
+        m_classes.clear();
+        m_classes.ensure_capacity(new_classes.size());
+        for (auto& new_class : new_classes) {
+            m_classes.unchecked_append(new_class);
+        }
+    }
 }
 
 enum class StyleDifference {
@@ -157,6 +171,9 @@ static StyleDifference compute_style_difference(const StyleProperties& old_style
 
     bool needs_repaint = false;
     bool needs_relayout = false;
+
+    if (new_style.display() != old_style.display())
+        needs_relayout = true;
 
     if (new_style.color_or_fallback(CSS::PropertyID::Color, document, Color::Black) != old_style.color_or_fallback(CSS::PropertyID::Color, document, Color::Black))
         needs_repaint = true;
@@ -178,22 +195,28 @@ void Element::recompute_style()
     if (!parent_layout_node)
         return;
     ASSERT(parent_layout_node);
-    auto style = document().style_resolver().resolve_style(*this, &parent_layout_node->style());
+    auto style = document().style_resolver().resolve_style(*this, &parent_layout_node->specified_style());
     m_resolved_style = style;
     if (!layout_node()) {
-        if (style->string_or_fallback(CSS::PropertyID::Display, "inline") == "none")
+        if (style->display() == CSS::Display::None)
             return;
         // We need a new layout tree here!
         LayoutTreeBuilder tree_builder;
         tree_builder.build(*this);
         return;
     }
-    auto diff = compute_style_difference(layout_node()->style(), *style, document());
+
+    // Don't bother with style on widgets. NATIVE LOOK & FEEL BABY!
+    if (layout_node()->is_widget())
+        return;
+
+    auto diff = compute_style_difference(layout_node()->specified_style(), *style, document());
     if (diff == StyleDifference::None)
         return;
-    layout_node()->set_style(*style);
+    layout_node()->set_specified_style(*style);
     if (diff == StyleDifference::NeedsRelayout) {
-        ASSERT_NOT_REACHED();
+        document().force_layout();
+        return;
     }
     if (diff == StyleDifference::NeedsRepaint) {
         layout_node()->set_needs_display();
@@ -219,7 +242,7 @@ NonnullRefPtr<StyleProperties> Element::computed_style()
             CSS::PropertyID::BorderRightWidth,
         };
         for (CSS::PropertyID id : box_model_metrics) {
-            auto prop = layout_node()->style().property(id);
+            auto prop = layout_node()->specified_style().property(id);
             if (prop.has_value())
                 properties->set_property(id, prop.value());
         }
@@ -229,13 +252,10 @@ NonnullRefPtr<StyleProperties> Element::computed_style()
 
 void Element::set_inner_html(StringView markup)
 {
-    auto fragment = parse_html_fragment(document(), markup);
+    auto new_children = HTMLDocumentParser::parse_html_fragment(*this, markup);
     remove_all_children();
-    if (!fragment)
-        return;
-    while (RefPtr<Node> child = fragment->first_child()) {
-        fragment->remove_child(*child);
-        append_child(*child);
+    while (!new_children.is_empty()) {
+        append_child(new_children.take_first());
     }
 
     set_needs_style_update(true);
@@ -251,13 +271,13 @@ String Element::inner_html() const
         for (auto* child = node.first_child(); child; child = child->next_sibling()) {
             if (child->is_element()) {
                 builder.append('<');
-                builder.append(to<Element>(*child).tag_name());
+                builder.append(to<Element>(*child).local_name());
                 builder.append('>');
 
                 recurse(*child);
 
                 builder.append("</");
-                builder.append(to<Element>(*child).tag_name());
+                builder.append(to<Element>(*child).local_name());
                 builder.append('>');
             }
             if (child->is_text()) {

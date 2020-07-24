@@ -145,7 +145,7 @@ void Cube::timer_event(Core::TimerEvent&)
     painter.fill_rect_with_gradient(Gfx::Orientation::Vertical, m_bitmap->rect(), Gfx::Color::White, Gfx::Color::Blue);
 
     auto to_point = [](const FloatVector3& v) {
-        return Gfx::Point(v.x(), v.y());
+        return Gfx::IntPoint(v.x(), v.y());
     };
 
     for (size_t i = 0; i < sizeof(indices) / sizeof(indices[0]) / 3; i++) {
@@ -190,7 +190,7 @@ void Cube::timer_event(Core::TimerEvent&)
 
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     auto window = GUI::Window::construct();
     window->set_double_buffering_enabled(true);
@@ -209,5 +209,5 @@ int main(int argc, char** argv)
     window->show();
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-cube.png"));
 
-    return app.exec();
+    return app->exec();
 }

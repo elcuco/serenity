@@ -56,7 +56,7 @@ FontEditorWidget::FontEditorWidget(const String& path, RefPtr<Gfx::Font>&& edite
     main_container.set_background_role(Gfx::ColorRole::SyntaxKeyword);
     main_container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fill);
 
-    // Top-Left Glyph Ediyor and info
+    // Top-Left Glyph Editor and info
     auto& editor_container = main_container.add<GUI::Widget>();
     editor_container.set_layout<GUI::VerticalBoxLayout>();
     editor_container.layout()->set_margins({ 4, 4, 4, 4 });
@@ -219,18 +219,13 @@ FontEditorWidget::FontEditorWidget(const String& path, RefPtr<Gfx::Font>&& edite
     save_button.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
     save_button.set_preferred_size(80, 0);
     save_button.set_text("Save");
-    save_button.on_click = [this] {
-        auto ret_val = m_edited_font->write_to_file(m_path);
-        if (!ret_val) {
-            GUI::MessageBox::show("The font file could not be saved.", "Save failed", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
-        }
-    };
+    save_button.on_click = [this](auto) { save_as(m_path); };
 
     auto& quit_button = bottom_container.add<GUI::Button>();
     quit_button.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
     quit_button.set_preferred_size(80, 0);
     quit_button.set_text("Quit");
-    quit_button.on_click = [this] {
+    quit_button.on_click = [](auto) {
         exit(0);
     };
 
@@ -295,4 +290,15 @@ FontEditorWidget::FontEditorWidget(const String& path, RefPtr<Gfx::Font>&& edite
 
 FontEditorWidget::~FontEditorWidget()
 {
+}
+
+bool FontEditorWidget::save_as(const String& path)
+{
+    auto ret_val = m_edited_font->write_to_file(path);
+    if (!ret_val) {
+        GUI::MessageBox::show(window(), "The font file could not be saved.", "Save failed", GUI::MessageBox::Type::Error);
+        return false;
+    }
+    m_path = path;
+    return true;
 }

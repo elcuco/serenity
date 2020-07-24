@@ -196,14 +196,14 @@ ByteBuffer String::to_byte_buffer() const
     return ByteBuffer::copy(reinterpret_cast<const u8*>(characters()), length());
 }
 
-int String::to_int(bool& ok) const
+Optional<int> String::to_int() const
 {
-    return StringUtils::convert_to_int(this->view(), ok);
+    return StringUtils::convert_to_int(view());
 }
 
-unsigned String::to_uint(bool& ok) const
+Optional<unsigned> String::to_uint() const
 {
-    return StringUtils::convert_to_uint(this->view(), ok);
+    return StringUtils::convert_to_uint(view());
 }
 
 String String::number(unsigned long long value)
@@ -260,15 +260,9 @@ String String::format(const char* fmt, ...)
     return builder.to_string();
 }
 
-bool String::starts_with(const StringView& str) const
+bool String::starts_with(const StringView& str, CaseSensitivity case_sensitivity) const
 {
-    if (str.is_empty())
-        return true;
-    if (is_empty())
-        return false;
-    if (str.length() > length())
-        return false;
-    return !memcmp(characters(), str.characters_without_null_termination(), str.length());
+    return StringUtils::starts_with(*this, str, case_sensitivity);
 }
 
 bool String::starts_with(char ch) const
@@ -278,15 +272,9 @@ bool String::starts_with(char ch) const
     return characters()[0] == ch;
 }
 
-bool String::ends_with(const StringView& str) const
+bool String::ends_with(const StringView& str, CaseSensitivity case_sensitivity) const
 {
-    if (str.is_empty())
-        return true;
-    if (is_empty())
-        return false;
-    if (str.length() > length())
-        return false;
-    return !memcmp(characters() + (length() - str.length()), str.characters_without_null_termination(), str.length());
+    return StringUtils::ends_with(*this, str, case_sensitivity);
 }
 
 bool String::ends_with(char ch) const
@@ -317,13 +305,13 @@ bool String::contains(const String& needle) const
     return strstr(characters(), needle.characters());
 }
 
-Optional<size_t> String::index_of(const String& needle) const
+Optional<size_t> String::index_of(const String& needle, size_t start) const
 {
     if (is_null() || needle.is_null())
         return {};
 
     const char* self_characters = characters();
-    const char* result = strstr(self_characters, needle.characters());
+    const char* result = strstr(self_characters + start, needle.characters());
     if (!result)
         return {};
     return Optional<size_t> { result - self_characters };
@@ -369,18 +357,42 @@ int String::replace(const String& needle, const String& replacement, bool all_oc
     return positions.size();
 }
 
-String String::trim_spaces() const
+String String::trim_whitespace(TrimMode mode) const
 {
-    size_t start = 0;
-    size_t end = length();
-    while (characters()[start] == ' ')
-        ++start;
-    while (characters()[end] == ' ') {
-        if (end <= start)
-            return "";
-        --end;
+    auto is_whitespace_character = [](char ch) -> bool {
+        return ch == '\t'
+            || ch == '\n'
+            || ch == '\v'
+            || ch == '\f'
+            || ch == '\r'
+            || ch == ' ';
+    };
+
+    size_t substring_start = 0;
+    size_t substring_length = length();
+
+    if (mode == TrimMode::Left || mode == TrimMode::Both) {
+        for (size_t i = 0; i < length(); ++i) {
+            if (substring_length == 0)
+                return "";
+            if (!is_whitespace_character(characters()[i]))
+                break;
+            ++substring_start;
+            --substring_length;
+        }
     }
-    return substring(start, end - start);
+
+    if (mode == TrimMode::Right || mode == TrimMode::Both) {
+        for (size_t i = length() - 1; i > 0; --i) {
+            if (substring_length == 0)
+                return "";
+            if (!is_whitespace_character(characters()[i]))
+                break;
+            --substring_length;
+        }
+    }
+
+    return substring(substring_start, substring_length);
 }
 
 String escape_html_entities(const StringView& html)

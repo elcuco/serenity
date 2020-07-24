@@ -25,6 +25,7 @@
  */
 
 #include <AK/BufferStream.h>
+#include <AK/URL.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Dictionary.h>
 
@@ -111,6 +112,15 @@ bool Decoder::decode(String& value)
     }
     value = *text_impl;
     return !m_stream.handle_read_failure();
+}
+
+bool Decoder::decode(URL& value)
+{
+    String string;
+    if (!decode(string))
+        return false;
+    value = URL(string);
+    return true;
 }
 
 bool Decoder::decode(Dictionary& dictionary)

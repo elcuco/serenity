@@ -1,4 +1,6 @@
 {
+  "background": {
+  },
   "background-attachment": {
     "inherited": false,
     "initial": "scroll"
@@ -24,6 +26,34 @@
       "border-width",
       "border-style",
       "border-color"
+    ]
+  },
+  "border-top": {
+    "longhands": [
+      "border-top-width",
+      "border-top-style",
+      "border-top-color"
+    ]
+  },
+  "border-right": {
+    "longhands": [
+      "border-right-width",
+      "border-right-style",
+      "border-right-color"
+    ]
+  },
+  "border-bottom": {
+    "longhands": [
+      "border-bottom-width",
+      "border-bottom-style",
+      "border-bottom-color"
+    ]
+  },
+  "border-left": {
+    "longhands": [
+      "border-left-width",
+      "border-left-style",
+      "border-left-color"
     ]
   },
   "border-bottom-color": {

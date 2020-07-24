@@ -31,6 +31,7 @@
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/MenuBar.h>
@@ -44,7 +45,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio rpath accept wpath cpath shared_buffer", nullptr) < 0) {
         perror("pledge");
@@ -65,15 +66,19 @@ int main(int argc, char** argv)
     container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     container.set_preferred_size(0, 36);
     container.set_layout<GUI::HorizontalBoxLayout>();
-    auto& flag_icon_label = container.add<GUI::Label>();
-    flag_icon_label.set_icon(Gfx::Bitmap::load_from_file("/res/icons/minesweeper/flag.png"));
+
+    auto& flag_image = container.add<GUI::ImageWidget>();
+    flag_image.load_from_file("/res/icons/minesweeper/flag.png");
+
     auto& flag_label = container.add<GUI::Label>();
     auto& face_button = container.add<GUI::Button>();
     face_button.set_button_style(Gfx::ButtonStyle::CoolBar);
     face_button.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fill);
     face_button.set_preferred_size(36, 0);
-    auto& time_icon_label = container.add<GUI::Label>();
-    time_icon_label.set_icon(Gfx::Bitmap::load_from_file("/res/icons/minesweeper/timer.png"));
+
+    auto& time_image = container.add<GUI::ImageWidget>();
+    time_image.load_from_file("/res/icons/minesweeper/timer.png");
+
     auto& time_label = container.add<GUI::Label>();
     auto& field = widget.add<Field>(flag_label, time_label, face_button, [&](auto size) {
         size.set_height(size.height() + container.preferred_size().height());
@@ -99,7 +104,7 @@ int main(int argc, char** argv)
     app_menu.add_separator();
 
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
+        GUI::Application::the()->quit();
         return;
     }));
 
@@ -122,11 +127,11 @@ int main(int argc, char** argv)
         GUI::AboutDialog::show("Minesweeper", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-minesweeper.png"), window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     window->show();
 
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/minesweeper/mine.png"));
 
-    return app.exec();
+    return app->exec();
 }

@@ -31,9 +31,9 @@
 
 namespace JS {
 
-NativeFunction* NativeFunction::create(Interpreter&, GlobalObject& global_object, const FlyString& name, AK::Function<Value(Interpreter&)> function)
+NativeFunction* NativeFunction::create(Interpreter&, GlobalObject& global_object, const FlyString& name, AK::Function<Value(Interpreter&, GlobalObject&)> function)
 {
-    return global_object.heap().allocate<NativeFunction>(name, move(function), *global_object.function_prototype());
+    return global_object.heap().allocate<NativeFunction>(global_object, name, move(function), *global_object.function_prototype());
 }
 
 NativeFunction::NativeFunction(Object& prototype)
@@ -41,7 +41,7 @@ NativeFunction::NativeFunction(Object& prototype)
 {
 }
 
-NativeFunction::NativeFunction(const FlyString& name, AK::Function<Value(Interpreter&)> native_function, Object& prototype)
+NativeFunction::NativeFunction(const FlyString& name, AK::Function<Value(Interpreter&, GlobalObject&)> native_function, Object& prototype)
     : Function(prototype)
     , m_name(name)
     , m_native_function(move(native_function))
@@ -60,12 +60,17 @@ NativeFunction::~NativeFunction()
 
 Value NativeFunction::call(Interpreter& interpreter)
 {
-    return m_native_function(interpreter);
+    return m_native_function(interpreter, global_object());
 }
 
-Value NativeFunction::construct(Interpreter&)
+Value NativeFunction::construct(Interpreter&, Function&)
 {
     return {};
+}
+
+LexicalEnvironment* NativeFunction::create_environment()
+{
+    return interpreter().heap().allocate<LexicalEnvironment>(global_object(), LexicalEnvironment::EnvironmentRecordType::Function);
 }
 
 }

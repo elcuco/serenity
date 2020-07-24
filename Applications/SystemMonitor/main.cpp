@@ -56,6 +56,7 @@
 #include <LibGfx/Palette.h>
 #include <LibPCIDB/Database.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -78,7 +79,7 @@ static NonnullRefPtr<GUI::Widget> build_graphs_tab();
 class UnavailableProcessWidget final : public GUI::Frame {
     C_OBJECT(UnavailableProcessWidget)
 public:
-    virtual ~UnavailableProcessWidget() override {}
+    virtual ~UnavailableProcessWidget() override { }
 
     const String& text() const { return m_text; }
     void set_text(String text) { m_text = move(text); }
@@ -111,14 +112,14 @@ can_access_pid(pid_t pid)
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio proc shared_buffer accept rpath unix cpath fattr", nullptr) < 0) {
+    if (pledge("stdio proc shared_buffer accept rpath exec unix cpath fattr", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio proc shared_buffer accept rpath", nullptr) < 0) {
+    if (pledge("stdio proc shared_buffer accept rpath exec", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -143,6 +144,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if (unveil("/bin/Profiler", "x") < 0) {
+        perror("unveil");
+        return 1;
+    }
+
     unveil(nullptr, nullptr);
 
     auto window = GUI::Window::construct();
@@ -157,6 +163,7 @@ int main(int argc, char** argv)
     auto& tabwidget = keeper.add<GUI::TabWidget>();
 
     auto& process_container_splitter = tabwidget.add_tab<GUI::VerticalSplitter>("Processes");
+    process_container_splitter.layout()->set_margins({ 4, 4, 4, 4 });
 
     auto& process_table_container = process_container_splitter.add<GUI::Widget>();
 
@@ -172,15 +179,12 @@ int main(int argc, char** argv)
     tabwidget.add_widget("Network", network_stats_widget);
 
     process_table_container.set_layout<GUI::VerticalBoxLayout>();
-    process_table_container.layout()->set_margins({ 4, 0, 4, 0 });
     process_table_container.layout()->set_spacing(0);
 
-    auto& toolbar = process_table_container.add<GUI::ToolBar>();
-    toolbar.set_has_frame(false);
     auto& process_table_view = process_table_container.add<ProcessTableView>();
 
     auto& refresh_timer = window->add<Core::Timer>(
-        1000, [&] {
+        3000, [&] {
             process_table_view.refresh();
             if (auto* memory_stats_widget = MemoryStatsWidget::the())
                 memory_stats_widget->refresh();
@@ -204,14 +208,22 @@ int main(int argc, char** argv)
             kill(pid, SIGCONT);
     });
 
-    toolbar.add_action(kill_action);
-    toolbar.add_action(stop_action);
-    toolbar.add_action(continue_action);
+    auto profile_action = GUI::Action::create("Profile process", { Mod_Ctrl, Key_P }, [&process_table_view](auto&) {
+        pid_t pid = process_table_view.selected_pid();
+        if (pid != -1) {
+            auto pid_string = String::format("%d", pid);
+            pid_t child;
+            const char* argv[] = { "/bin/Profiler", "--pid", pid_string.characters(), nullptr };
+            if ((errno = posix_spawn(&child, "/bin/Profiler", nullptr, nullptr, const_cast<char**>(argv), environ))) {
+                perror("posix_spawn");
+            }
+        }
+    });
 
     auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("System Monitor");
     app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
-        GUI::Application::the().quit(0);
+        GUI::Application::the()->quit();
         return;
     }));
 
@@ -219,11 +231,15 @@ int main(int argc, char** argv)
     process_menu.add_action(kill_action);
     process_menu.add_action(stop_action);
     process_menu.add_action(continue_action);
+    process_menu.add_separator();
+    process_menu.add_action(profile_action);
 
     auto process_context_menu = GUI::Menu::construct();
     process_context_menu->add_action(kill_action);
     process_context_menu->add_action(stop_action);
     process_context_menu->add_action(continue_action);
+    process_context_menu->add_separator();
+    process_context_menu->add_action(profile_action);
     process_table_view.on_context_menu_request = [&](const GUI::ModelIndex& index, const GUI::ContextMenuEvent& event) {
         (void)index;
         process_context_menu->popup(event.screen_position());
@@ -242,10 +258,8 @@ int main(int argc, char** argv)
         frequency_menu.add_action(*action);
     };
 
-    make_frequency_action("0.25 sec", 250);
-    make_frequency_action("0.5 sec", 500);
-    make_frequency_action("1 sec", 1000, true);
-    make_frequency_action("3 sec", 3000);
+    make_frequency_action("1 sec", 1000);
+    make_frequency_action("3 sec", 3000, true);
     make_frequency_action("5 sec", 5000);
 
     auto& help_menu = menubar->add_menu("Help");
@@ -253,7 +267,7 @@ int main(int argc, char** argv)
         GUI::AboutDialog::show("System Monitor", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-system-monitor.png"), window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     auto& process_tab_unused_widget = process_container_splitter.add<UnavailableProcessWidget>("No process selected");
     process_tab_unused_widget.set_visible(true);
@@ -286,14 +300,14 @@ int main(int argc, char** argv)
 
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-system-monitor.png"));
 
-    return app.exec();
+    return app->exec();
 }
 
 class ProgressBarPaintingDelegate final : public GUI::TableCellPaintingDelegate {
 public:
-    virtual ~ProgressBarPaintingDelegate() override {}
+    virtual ~ProgressBarPaintingDelegate() override { }
 
-    virtual void paint(GUI::Painter& painter, const Gfx::Rect& a_rect, const Palette& palette, const GUI::Model& model, const GUI::ModelIndex& index) override
+    virtual void paint(GUI::Painter& painter, const Gfx::IntRect& a_rect, const Palette& palette, const GUI::Model& model, const GUI::ModelIndex& index) override
     {
         auto rect = a_rect.shrunken(2, 2);
         auto percentage = model.data(index, GUI::Model::Role::Custom).to_i32();
@@ -315,7 +329,6 @@ NonnullRefPtr<GUI::Widget> build_file_systems_tab()
         self.set_layout<GUI::VerticalBoxLayout>();
         self.layout()->set_margins({ 4, 4, 4, 4 });
         auto& fs_table_view = self.add<GUI::TableView>();
-        fs_table_view.set_size_columns_to_fit_content(true);
 
         Vector<GUI::JsonArrayModel::FieldSpec> df_fields;
         df_fields.empend("mount_point", "Mount point", Gfx::TextAlignment::CenterLeft);
@@ -364,7 +377,9 @@ NonnullRefPtr<GUI::Widget> build_file_systems_tab()
                 return object.get("free_block_count").to_u32() * object.get("block_size").to_u32();
             });
         df_fields.empend("Access", Gfx::TextAlignment::CenterLeft, [](const JsonObject& object) {
-            return object.get("readonly").to_bool() ? "Read-only" : "Read/Write";
+            bool readonly = object.get("readonly").to_bool();
+            int mount_flags = object.get("mount_flags").to_int();
+            return readonly || (mount_flags & MS_RDONLY) ? "Read-only" : "Read/Write";
         });
         df_fields.empend("Mount flags", Gfx::TextAlignment::CenterLeft, [](const JsonObject& object) {
             int mount_flags = object.get("mount_flags").to_int();
@@ -382,6 +397,7 @@ NonnullRefPtr<GUI::Widget> build_file_systems_tab()
             check(MS_NOEXEC, "noexec");
             check(MS_NOSUID, "nosuid");
             check(MS_BIND, "bind");
+            check(MS_RDONLY, "ro");
             if (builder.string_view().is_empty())
                 return String("defaults");
             return builder.to_string();
@@ -408,7 +424,6 @@ NonnullRefPtr<GUI::Widget> build_pci_devices_tab()
         self.set_layout<GUI::VerticalBoxLayout>();
         self.layout()->set_margins({ 4, 4, 4, 4 });
         auto& pci_table_view = self.add<GUI::TableView>();
-        pci_table_view.set_size_columns_to_fit_content(true);
 
         auto db = PCIDB::Database::open();
 
@@ -467,7 +482,6 @@ NonnullRefPtr<GUI::Widget> build_devices_tab()
         self.layout()->set_margins({ 4, 4, 4, 4 });
 
         auto& devices_table_view = self.add<GUI::TableView>();
-        devices_table_view.set_size_columns_to_fit_content(true);
         devices_table_view.set_model(GUI::SortingProxyModel::create(DevicesModel::create()));
         devices_table_view.model()->update();
     };
@@ -486,20 +500,24 @@ NonnullRefPtr<GUI::Widget> build_graphs_tab()
         self.layout()->set_margins({ 4, 4, 4, 4 });
 
         auto& cpu_graph_group_box = self.add<GUI::GroupBox>("CPU usage");
-        cpu_graph_group_box.set_layout<GUI::VerticalBoxLayout>();
+        cpu_graph_group_box.set_layout<GUI::HorizontalBoxLayout>();
         cpu_graph_group_box.layout()->set_margins({ 6, 16, 6, 6 });
         cpu_graph_group_box.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
         cpu_graph_group_box.set_preferred_size(0, 120);
-        auto& cpu_graph = cpu_graph_group_box.add<GraphWidget>();
-        cpu_graph.set_max(100);
-        cpu_graph.set_text_color(Color::Green);
-        cpu_graph.set_graph_color(Color::from_rgb(0x00bb00));
-        cpu_graph.text_formatter = [](int value, int) {
-            return String::format("%d%%", value);
-        };
-
-        ProcessModel::the().on_new_cpu_data_point = [graph = &cpu_graph](float cpu_percent) {
-            graph->add_value(cpu_percent);
+        Vector<GraphWidget*> cpu_graphs;
+        for (size_t i = 0; i < ProcessModel::the().cpus().size(); i++) {
+            auto& cpu_graph = cpu_graph_group_box.add<GraphWidget>();
+            cpu_graph.set_max(100);
+            cpu_graph.set_text_color(Color::Green);
+            cpu_graph.set_graph_color(Color::from_rgb(0x00bb00));
+            cpu_graph.text_formatter = [](int value, int) {
+                return String::format("%d%%", value);
+            };
+            cpu_graphs.append(&cpu_graph);
+        }
+        ProcessModel::the().on_cpu_info_change = [cpu_graphs](const NonnullOwnPtrVector<ProcessModel::CpuInfo>& cpus) {
+            for (size_t i = 0; i < cpus.size(); i++)
+                cpu_graphs[i]->add_value(cpus[i].total_cpu_percent);
         };
 
         auto& memory_graph_group_box = self.add<GUI::GroupBox>("Memory usage");

@@ -31,7 +31,9 @@
 #include <LibJS/Runtime/MarkedValueList.h>
 #include <LibJS/Runtime/ScriptFunction.h>
 #include <LibWeb/Bindings/EventWrapper.h>
+#include <LibWeb/Bindings/EventWrapperFactory.h>
 #include <LibWeb/Bindings/NodeWrapper.h>
+#include <LibWeb/Bindings/NodeWrapperFactory.h>
 #include <LibWeb/CSS/StyleResolver.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Event.h>
@@ -49,7 +51,7 @@
 namespace Web {
 
 Node::Node(Document& document, NodeType type)
-    : m_document(document)
+    : m_document(&document)
     , m_type(type)
 {
 }
@@ -63,7 +65,7 @@ Node::~Node()
 const HTMLAnchorElement* Node::enclosing_link_element() const
 {
     for (auto* node = this; node; node = node->parent()) {
-        if (is<HTMLAnchorElement>(*node) && to<HTMLAnchorElement>(*node).has_attribute("href"))
+        if (is<HTMLAnchorElement>(*node) && to<HTMLAnchorElement>(*node).has_attribute(HTML::AttributeNames::href))
             return to<HTMLAnchorElement>(node);
     }
     return nullptr;
@@ -108,7 +110,7 @@ const Element* Node::previous_element_sibling() const
     return nullptr;
 }
 
-RefPtr<LayoutNode> Node::create_layout_node(const StyleProperties*) const
+RefPtr<LayoutNode> Node::create_layout_node(const StyleProperties*)
 {
     return nullptr;
 }
@@ -124,27 +126,24 @@ void Node::invalidate_style()
 
 bool Node::is_link() const
 {
-    auto* enclosing_link = enclosing_link_element();
-    if (!enclosing_link)
-        return false;
-    return enclosing_link->has_attribute("href");
+    return enclosing_link_element();
 }
 
 void Node::dispatch_event(NonnullRefPtr<Event> event)
 {
     for (auto& listener : listeners()) {
-        if (listener.event_name == event->name()) {
+        if (listener.event_name == event->type()) {
             auto& function = const_cast<EventListener&>(*listener.listener).function();
 #ifdef EVENT_DEBUG
-            static_cast<const JS::ScriptFunction*>(function)->body().dump(0);
+            static_cast<const JS::ScriptFunction&>(function).body().dump(0);
 #endif
-            auto& heap = function.heap();
-            auto* this_value = wrap(heap, *this);
+            auto& global_object = function.global_object();
+            auto* this_value = wrap(global_object, *this);
 #ifdef EVENT_DEBUG
             dbg() << "calling event listener with this=" << this_value;
 #endif
-            auto* event_wrapper = wrap(heap, *event);
-            JS::MarkedValueList arguments(heap);
+            auto* event_wrapper = wrap(global_object, *event);
+            JS::MarkedValueList arguments(global_object.heap());
             arguments.append(event_wrapper);
             document().interpreter().call(function, this_value, move(arguments));
         }
@@ -153,6 +152,69 @@ void Node::dispatch_event(NonnullRefPtr<Event> event)
     // FIXME: This is a hack. We should follow the real rules of event bubbling.
     if (parent())
         parent()->dispatch_event(move(event));
+}
+
+String Node::child_text_content() const
+{
+    if (!is<ParentNode>(*this))
+        return String::empty();
+
+    StringBuilder builder;
+    to<ParentNode>(*this).for_each_child([&](auto& child) {
+        if (is<Text>(child))
+            builder.append(to<Text>(child).text_content());
+    });
+    return builder.build();
+}
+
+const Node* Node::root() const
+{
+    const Node* root = this;
+    while (root->parent())
+        root = root->parent();
+    return root;
+}
+
+bool Node::is_connected() const
+{
+    return root() && root()->is_document();
+}
+
+Element* Node::parent_element()
+{
+    if (!parent() || !is<Element>(parent()))
+        return nullptr;
+    return to<Element>(parent());
+}
+
+const Element* Node::parent_element() const
+{
+    if (!parent() || !is<Element>(parent()))
+        return nullptr;
+    return to<Element>(parent());
+}
+
+RefPtr<Node> Node::append_child(NonnullRefPtr<Node> node, bool notify)
+{
+    TreeNode<Node>::append_child(node, notify);
+    return node;
+}
+
+RefPtr<Node> Node::insert_before(NonnullRefPtr<Node> node, RefPtr<Node> child, bool notify)
+{
+    if (!child)
+        return append_child(move(node), notify);
+    if (child->parent_node() != this) {
+        dbg() << "FIXME: Trying to insert_before() a bogus child";
+        return nullptr;
+    }
+    TreeNode<Node>::insert_before(node, child, notify);
+    return node;
+}
+
+void Node::set_document(Badge<Document>, Document& document)
+{
+    m_document = &document;
 }
 
 }

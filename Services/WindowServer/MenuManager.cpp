@@ -26,7 +26,6 @@
  */
 
 #include <AK/Badge.h>
-#include <AK/FileSystemPath.h>
 #include <AK/QuickSort.h>
 #include <LibCore/DirIterator.h>
 #include <LibGfx/Font.h>
@@ -147,7 +146,7 @@ void MenuManager::event(Core::Event& event)
         if (m_current_menu && event.type() == Event::KeyDown
             && ((key_event.key() >= Key_A && key_event.key() <= Key_Z)
                 || (key_event.key() >= Key_0 && key_event.key() <= Key_9))) {
-            m_current_search.append(key_event.character());
+            m_current_search.append_codepoint(key_event.code_point());
             m_search_timer->restart(s_search_timeout);
             for (int i = 0; i < m_current_menu->item_count(); ++i) {
                 auto text = m_current_menu->item(i).text();
@@ -312,7 +311,7 @@ void MenuManager::close_everyone()
     }
     m_open_menu_stack.clear();
     m_current_search.clear();
-    m_current_menu = nullptr;
+    clear_current_menu();
     refresh();
 }
 
@@ -333,7 +332,7 @@ void MenuManager::close_menus(const Vector<Menu*>& menus)
 {
     for (auto& menu : menus) {
         if (menu == m_current_menu)
-            m_current_menu = nullptr;
+            clear_current_menu();
         if (menu->menu_window())
             menu->menu_window()->set_visible(false);
         menu->clear_hovered_item();
@@ -351,7 +350,7 @@ static void collect_menu_subtree(Menu& menu, Vector<Menu*>& menus)
         auto& item = menu.item(i);
         if (!item.is_submenu())
             continue;
-        collect_menu_subtree(*const_cast<MenuItem&>(item).submenu(), menus);
+        collect_menu_subtree(*item.submenu(), menus);
     }
 }
 
@@ -374,8 +373,11 @@ void MenuManager::toggle_menu(Menu& menu)
 void MenuManager::open_menu(Menu& menu, bool as_current_menu)
 {
     if (is_open(menu)) {
-        if (as_current_menu)
+        if (as_current_menu || current_menu() != &menu) {
+            // This menu is already open. If requested, or if the current
+            // window doesn't match this one, then set it to this
             set_current_menu(&menu);
+        }
         return;
     }
 
@@ -391,16 +393,30 @@ void MenuManager::open_menu(Menu& menu, bool as_current_menu)
     if (m_open_menu_stack.find([&menu](auto& other) { return &menu == other.ptr(); }).is_end())
         m_open_menu_stack.append(menu.make_weak_ptr());
 
-    if (as_current_menu)
+    if (as_current_menu || !current_menu()) {
+        // Only make this menu the current menu if requested, or if no
+        // other menu is current
         set_current_menu(&menu);
+    }
 
     refresh();
+}
+
+void MenuManager::clear_current_menu()
+{
+    Menu* previous_current_menu = m_current_menu;
+    m_current_menu = nullptr;
+    if (previous_current_menu) {
+        // When closing the last menu, restore the previous active input window
+        auto& wm = WindowManager::the();
+        wm.restore_active_input_window(m_previous_input_window);
+    }
 }
 
 void MenuManager::set_current_menu(Menu* menu)
 {
     if (!menu) {
-        m_current_menu = nullptr;
+        clear_current_menu();
         return;
     }
 
@@ -410,7 +426,20 @@ void MenuManager::set_current_menu(Menu* menu)
     }
 
     m_current_search.clear();
+
+    Menu* previous_current_menu = m_current_menu;
     m_current_menu = menu->make_weak_ptr();
+
+    auto& wm = WindowManager::the();
+    if (!previous_current_menu) {
+        // When opening the first menu, store the current active input window
+        if (auto* active_input = wm.active_input_window())
+            m_previous_input_window = active_input->make_weak_ptr();
+        else
+            m_previous_input_window = nullptr;
+    }
+
+    wm.set_active_input_window(m_current_menu->menu_window());
 }
 
 void MenuManager::close_bar()
@@ -419,7 +448,7 @@ void MenuManager::close_bar()
     m_bar_open = false;
 }
 
-Gfx::Rect MenuManager::menubar_rect() const
+Gfx::IntRect MenuManager::menubar_rect() const
 {
     return { 0, 0, Screen::the().rect().width(), 19 };
 }
@@ -433,7 +462,7 @@ void MenuManager::set_current_menubar(MenuBar* menubar)
 #ifdef DEBUG_MENUS
     dbg() << "[WM] Current menubar is now " << menubar;
 #endif
-    Gfx::Point next_menu_location { MenuManager::menubar_menu_margin() / 2, 0 };
+    Gfx::IntPoint next_menu_location { MenuManager::menubar_menu_margin() / 2, 0 };
     for_each_active_menubar_menu([&](Menu& menu) {
         int text_width = menu.title_font().width(menu.name());
         menu.set_rect_in_menubar({ next_menu_location.x() - MenuManager::menubar_menu_margin() / 2, 0, text_width + MenuManager::menubar_menu_margin(), menubar_rect().height() - 1 });

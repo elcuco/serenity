@@ -49,13 +49,14 @@ public:
     bool is_open(const Menu&) const;
     bool has_open_menu() const { return !m_open_menu_stack.is_empty(); }
 
-    Gfx::Rect menubar_rect() const;
+    Gfx::IntRect menubar_rect() const;
     static int menubar_menu_margin() { return 16; }
 
     void set_needs_window_resize();
 
     Menu* current_menu() { return m_current_menu.ptr(); }
     void set_current_menu(Menu*);
+    void clear_current_menu();
     void open_menu(Menu&, bool as_current_menu = true);
     void toggle_menu(Menu&);
 
@@ -69,12 +70,6 @@ public:
     void close_menu_and_descendants(Menu&);
 
     void close_all_menus_from_client(Badge<ClientConnection>, ClientConnection&);
-
-    void toggle_system_menu()
-    {
-        if (m_system_menu)
-            toggle_menu(*m_system_menu);
-    }
 
     Menu* system_menu() { return m_system_menu; }
     void set_system_menu(Menu&);
@@ -110,6 +105,7 @@ private:
     RefPtr<Window> m_window;
 
     WeakPtr<Menu> m_current_menu;
+    WeakPtr<Window> m_previous_input_window;
     Vector<WeakPtr<Menu>> m_open_menu_stack;
 
     RefPtr<Core::Timer> m_search_timer;

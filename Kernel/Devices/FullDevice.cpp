@@ -27,6 +27,7 @@
 #include "FullDevice.h"
 #include <AK/Memory.h>
 #include <AK/StdLibExtras.h>
+#include <Kernel/Arch/i386/CPU.h>
 #include <LibC/errno_numbers.h>
 
 namespace Kernel {
@@ -47,7 +48,7 @@ bool FullDevice::can_read(const FileDescription&, size_t) const
 
 ssize_t FullDevice::read(FileDescription&, size_t, u8* buffer, ssize_t size)
 {
-    ssize_t count = min(PAGE_SIZE, size);
+    ssize_t count = min(static_cast<ssize_t>(PAGE_SIZE), size);
     memset(buffer, 0, (size_t)count);
     return count;
 }

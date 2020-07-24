@@ -29,7 +29,6 @@
 #include <LibCore/ConfigFile.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/LocalServer.h>
-#include <LibGUI/WindowServerConnection.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -43,6 +42,7 @@ int main(int argc, char** argv)
 
     auto launcher = LaunchServer::Launcher();
 
+    launcher.load_handlers("/res/apps");
     launcher.load_config(Core::ConfigFile::get_for_app("LaunchServer"));
 
     if (pledge("stdio accept rpath proc exec", nullptr) < 0) {
@@ -61,7 +61,7 @@ int main(int argc, char** argv)
         static int s_next_client_id = 0;
         int client_id = ++s_next_client_id;
         dbg() << "Received connection";
-        IPC::new_client_connection<LaunchServer::ClientConnection>(*client_socket, client_id);
+        IPC::new_client_connection<LaunchServer::ClientConnection>(client_socket.release_nonnull(), client_id);
     };
 
     return event_loop.exec();

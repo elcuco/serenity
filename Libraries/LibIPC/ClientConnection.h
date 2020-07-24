@@ -29,10 +29,9 @@
 #include <AK/ByteBuffer.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
-#include <LibCore/IODevice.h>
 #include <LibCore/LocalSocket.h>
-#include <LibCore/Notifier.h>
 #include <LibCore/Object.h>
+#include <LibCore/Timer.h>
 #include <LibIPC/Endpoint.h>
 #include <LibIPC/Message.h>
 #include <errno.h>
@@ -49,7 +48,7 @@ public:
         Invalid = 2000,
         Disconnected,
     };
-    Event() {}
+    Event() { }
     explicit Event(Type type)
         : Core::Event(type)
     {
@@ -79,25 +78,29 @@ NonnullRefPtr<T> new_client_connection(Args&&... args)
 template<typename Endpoint>
 class ClientConnection : public Core::Object {
 public:
-    ClientConnection(Endpoint& endpoint, Core::LocalSocket& socket, int client_id)
+    ClientConnection(Endpoint& endpoint, NonnullRefPtr<Core::LocalSocket> socket, int client_id)
         : m_endpoint(endpoint)
-        , m_socket(socket)
+        , m_socket(move(socket))
         , m_client_id(client_id)
     {
-        ASSERT(socket.is_connected());
+        ASSERT(m_socket->is_connected());
         ucred creds;
         socklen_t creds_size = sizeof(creds);
         if (getsockopt(m_socket->fd(), SOL_SOCKET, SO_PEERCRED, &creds, &creds_size) < 0) {
             ASSERT_NOT_REACHED();
         }
         m_client_pid = creds.pid;
-        add_child(socket);
         m_socket->on_ready_to_read = [this] { drain_messages_from_client(); };
+
+        m_responsiveness_timer = Core::Timer::create_single_shot(3000, [this] { may_have_become_unresponsive(); });
     }
 
     virtual ~ClientConnection() override
     {
     }
+
+    virtual void may_have_become_unresponsive() { }
+    virtual void did_become_responsive() { }
 
     void post_message(const Message& message)
     {
@@ -108,28 +111,36 @@ public:
 
         auto buffer = message.encode();
 
-        int nwritten = write(m_socket->fd(), buffer.data(), buffer.size());
-        if (nwritten < 0) {
-            switch (errno) {
-            case EPIPE:
-                dbg() << *this << "::post_message: Disconnected from peer";
-                shutdown();
-                return;
-            case EAGAIN:
-                dbg() << *this << "::post_message: Client buffer overflowed.";
-                did_misbehave();
-                return;
-            default:
-                perror("Connection::post_message write");
-                ASSERT_NOT_REACHED();
+        auto bytes_remaining = buffer.size();
+        while (bytes_remaining) {
+            auto nwritten = write(m_socket->fd(), buffer.data(), buffer.size());
+            if (nwritten < 0) {
+                switch (errno) {
+                case EPIPE:
+                    dbg() << *this << "::post_message: Disconnected from peer";
+                    shutdown();
+                    return;
+                case EAGAIN:
+                    dbg() << *this << "::post_message: Client buffer overflowed.";
+                    did_misbehave();
+                    return;
+                default:
+                    perror("Connection::post_message write");
+                    shutdown();
+                    return;
+                }
             }
+            bytes_remaining -= nwritten;
         }
 
-        ASSERT(static_cast<size_t>(nwritten) == buffer.size());
+        m_responsiveness_timer->start();
     }
 
     void drain_messages_from_client()
     {
+        if (!m_socket->is_open())
+            return;
+
         Vector<u8> bytes;
         for (;;) {
             u8 buffer[4096];
@@ -143,9 +154,15 @@ public:
             }
             if (nread < 0) {
                 perror("recv");
-                ASSERT_NOT_REACHED();
+                shutdown();
+                return;
             }
             bytes.append(buffer, nread);
+        }
+
+        if (!bytes.is_empty()) {
+            m_responsiveness_timer->stop();
+            did_become_responsive();
         }
 
         size_t decoded_bytes = 0;
@@ -182,7 +199,9 @@ public:
     }
 
     int client_id() const { return m_client_id; }
+
     pid_t client_pid() const { return m_client_pid; }
+    void set_client_pid(pid_t pid) { m_client_pid = pid; }
 
     virtual void die() = 0;
 
@@ -190,8 +209,10 @@ protected:
     void event(Core::Event& event) override
     {
         if (event.type() == Event::Disconnected) {
+#ifdef IPC_DEBUG
             int client_id = static_cast<const DisconnectedEvent&>(event).client_id();
             dbg() << *this << ": Client disconnected: " << client_id;
+#endif
             die();
             return;
         }
@@ -201,7 +222,8 @@ protected:
 
 private:
     Endpoint& m_endpoint;
-    RefPtr<Core::LocalSocket> m_socket;
+    NonnullRefPtr<Core::LocalSocket> m_socket;
+    RefPtr<Core::Timer> m_responsiveness_timer;
     int m_client_id { -1 };
     int m_client_pid { -1 };
 };

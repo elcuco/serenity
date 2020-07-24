@@ -37,23 +37,28 @@
 
 namespace JS {
 
-NumberConstructor::NumberConstructor()
-    : NativeFunction("Number", *interpreter().global_object().function_prototype())
+NumberConstructor::NumberConstructor(GlobalObject& global_object)
+    : NativeFunction("Number", *global_object.function_prototype())
 {
-    u8 attr = Attribute::Writable | Attribute::Configurable;
-    put_native_function("isFinite", is_finite, 1, attr);
-    put_native_function("isInteger", is_integer, 1, attr);
-    put_native_function("isNaN", is_nan, 1, attr);
-    put_native_function("isSafeInteger", is_safe_integer, 1, attr);
+}
 
-    put("prototype", interpreter().global_object().number_prototype(), 0);
-    put("length", Value(1), Attribute::Configurable);
-    put("EPSILON", Value(EPSILON), 0);
-    put("MAX_SAFE_INTEGER", Value(MAX_SAFE_INTEGER), 0);
-    put("MIN_SAFE_INTEGER", Value(MIN_SAFE_INTEGER), 0);
-    put("NEGATIVE_INFINITY", js_negative_infinity(), 0);
-    put("POSITIVE_INFINITY", js_infinity(), 0);
-    put("NaN", js_nan(), 0);
+void NumberConstructor::initialize(GlobalObject& global_object)
+{
+    NativeFunction::initialize(global_object);
+    u8 attr = Attribute::Writable | Attribute::Configurable;
+    define_native_function("isFinite", is_finite, 1, attr);
+    define_native_function("isInteger", is_integer, 1, attr);
+    define_native_function("isNaN", is_nan, 1, attr);
+    define_native_function("isSafeInteger", is_safe_integer, 1, attr);
+    define_property("parseFloat", global_object.get("parseFloat"));
+    define_property("prototype", global_object.number_prototype(), 0);
+    define_property("length", Value(1), Attribute::Configurable);
+    define_property("EPSILON", Value(EPSILON), 0);
+    define_property("MAX_SAFE_INTEGER", Value(MAX_SAFE_INTEGER), 0);
+    define_property("MIN_SAFE_INTEGER", Value(MIN_SAFE_INTEGER), 0);
+    define_property("NEGATIVE_INFINITY", js_negative_infinity(), 0);
+    define_property("POSITIVE_INFINITY", js_infinity(), 0);
+    define_property("NaN", js_nan(), 0);
 }
 
 NumberConstructor::~NumberConstructor()
@@ -64,39 +69,40 @@ Value NumberConstructor::call(Interpreter& interpreter)
 {
     if (!interpreter.argument_count())
         return Value(0);
-    return interpreter.argument(0).to_number();
+    return interpreter.argument(0).to_number(interpreter);
 }
 
-Value NumberConstructor::construct(Interpreter& interpreter)
+Value NumberConstructor::construct(Interpreter& interpreter, Function&)
 {
-    double number;
-    if (!interpreter.argument_count())
-        number = 0;
-    else
-        number = interpreter.argument(0).to_number().as_double();
-    return NumberObject::create(interpreter.global_object(), number);
+    double number = 0;
+    if (interpreter.argument_count()) {
+        number = interpreter.argument(0).to_double(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
+    return NumberObject::create(global_object(), number);
 }
 
-Value NumberConstructor::is_finite(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(NumberConstructor::is_finite)
 {
     return Value(interpreter.argument(0).is_finite_number());
 }
 
-Value NumberConstructor::is_integer(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(NumberConstructor::is_integer)
 {
     return Value(interpreter.argument(0).is_integer());
 }
 
-Value NumberConstructor::is_nan(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(NumberConstructor::is_nan)
 {
     return Value(interpreter.argument(0).is_nan());
 }
 
-Value NumberConstructor::is_safe_integer(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(NumberConstructor::is_safe_integer)
 {
     if (!interpreter.argument(0).is_number())
         return Value(false);
-    auto value = interpreter.argument(0).to_number().as_double();
+    auto value = interpreter.argument(0).as_double();
     return Value((int64_t)value == value && value >= MIN_SAFE_INTEGER && value <= MAX_SAFE_INTEGER);
 }
 

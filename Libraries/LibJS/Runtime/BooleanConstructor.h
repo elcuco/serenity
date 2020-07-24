@@ -31,16 +31,18 @@
 namespace JS {
 
 class BooleanConstructor final : public NativeFunction {
+    JS_OBJECT(BooleanConstructor, NativeFunction);
+
 public:
-    BooleanConstructor();
+    explicit BooleanConstructor(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~BooleanConstructor() override;
 
     virtual Value call(Interpreter&) override;
-    virtual Value construct(Interpreter&) override;
+    virtual Value construct(Interpreter&, Function& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
-    virtual const char* class_name() const override { return "BooleanConstructor"; }
 };
 
 }

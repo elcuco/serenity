@@ -33,11 +33,11 @@ namespace Web {
 
 class HTMLFormElement : public HTMLElement {
 public:
-    HTMLFormElement(Document&, const FlyString& tag_name);
+    HTMLFormElement(Document&, const FlyString& local_name);
     virtual ~HTMLFormElement() override;
 
-    String action() const { return attribute("action"); }
-    String method() const { return attribute("method"); }
+    String action() const { return attribute(HTML::AttributeNames::action); }
+    String method() const { return attribute(HTML::AttributeNames::method); }
 
     void submit(RefPtr<HTMLInputElement> submitter);
 };
@@ -45,7 +45,7 @@ public:
 template<>
 inline bool is<HTMLFormElement>(const Node& node)
 {
-    return is<Element>(node) && to<Element>(node).tag_name().equals_ignoring_case("form");
+    return is<Element>(node) && to<Element>(node).local_name() == HTML::TagNames::form;
 }
 
 }

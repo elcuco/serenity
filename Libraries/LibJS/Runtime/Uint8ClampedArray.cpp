@@ -32,19 +32,17 @@
 
 namespace JS {
 
-Uint8ClampedArray* Uint8ClampedArray::create(GlobalObject& global_object, i32 length)
+Uint8ClampedArray* Uint8ClampedArray::create(GlobalObject& global_object, u32 length)
 {
-    ASSERT(length >= 0);
     auto& interpreter = global_object.interpreter();
-    return interpreter.heap().allocate<Uint8ClampedArray>(length, *global_object.array_prototype());
+    return interpreter.heap().allocate<Uint8ClampedArray>(global_object, length, *global_object.array_prototype());
 }
 
-Uint8ClampedArray::Uint8ClampedArray(i32 length, Object& prototype)
-    : Object(&prototype)
+Uint8ClampedArray::Uint8ClampedArray(u32 length, Object& prototype)
+    : Object(prototype)
     , m_length(length)
 {
-    ASSERT(m_length >= 0);
-    put_native_property("length", length_getter, nullptr);
+    define_native_property("length", length_getter, nullptr);
     m_data = new u8[m_length];
 }
 
@@ -55,28 +53,29 @@ Uint8ClampedArray::~Uint8ClampedArray()
     m_data = nullptr;
 }
 
-Value Uint8ClampedArray::length_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(Uint8ClampedArray::length_getter)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return {};
     if (StringView(this_object->class_name()) != "Uint8ClampedArray")
-        return interpreter.throw_exception<TypeError>("Not a Uint8ClampedArray");
+        return interpreter.throw_exception<TypeError>(ErrorType::NotA, "Uint8ClampedArray");
     return Value(static_cast<const Uint8ClampedArray*>(this_object)->length());
 }
 
-bool Uint8ClampedArray::put_by_index(i32 property_index, Value value, u8)
+bool Uint8ClampedArray::put_by_index(u32 property_index, Value value)
 {
     // FIXME: Use attributes
-    ASSERT(property_index >= 0);
     ASSERT(property_index < m_length);
-    m_data[property_index] = clamp(value.to_i32(), 0, 255);
+    auto number = value.to_i32(interpreter());
+    if (interpreter().exception())
+        return {};
+    m_data[property_index] = clamp(number, 0, 255);
     return true;
 }
 
-Value Uint8ClampedArray::get_by_index(i32 property_index) const
+Value Uint8ClampedArray::get_by_index(u32 property_index) const
 {
-    ASSERT(property_index >= 0);
     ASSERT(property_index < m_length);
     return Value((i32)m_data[property_index]);
 }

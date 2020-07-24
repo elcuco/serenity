@@ -62,6 +62,7 @@ public:
 
     void scale(float sx, float sy);
     void translate(float x, float y);
+    void rotate(float degrees);
 
     void set_line_width(float line_width) { m_line_width = line_width; }
     float line_width() const { return m_line_width; }
@@ -72,10 +73,15 @@ public:
     void line_to(float x, float y);
     void quadratic_curve_to(float cx, float cy, float x, float y);
     void stroke();
-    void fill(Gfx::Painter::WindingRule);
 
-    RefPtr<ImageData> create_image_data(JS::GlobalObject&, int width, int height) const;
+    // FIXME: We should only have one fill(), really. Fix the wrapper generator!
+    void fill(Gfx::Painter::WindingRule);
+    void fill(const String& fill_rule);
+
+    RefPtr<ImageData> create_image_data(int width, int height) const;
     void put_image_data(const ImageData&, float x, float y);
+
+    HTMLCanvasElement* canvas() { return m_element; }
 
 private:
     explicit CanvasRenderingContext2D(HTMLCanvasElement&);

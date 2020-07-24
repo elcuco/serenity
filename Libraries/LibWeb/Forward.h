@@ -30,43 +30,67 @@ namespace Web {
 
 class CanvasRenderingContext2D;
 class Document;
+class DocumentType;
 class Element;
 class Event;
+class EventHandler;
 class EventListener;
 class EventTarget;
 class Frame;
 class HTMLBodyElement;
 class HTMLCanvasElement;
+class HTMLDocumentParser;
 class HTMLElement;
+class HTMLFormElement;
 class HTMLHeadElement;
 class HTMLHtmlElement;
 class HTMLImageElement;
-class HtmlView;
+class HTMLScriptElement;
+class PageView;
 class ImageData;
+class LineBox;
+class LineBoxFragment;
+class LayoutBlock;
 class LayoutDocument;
 class LayoutNode;
+class LayoutNodeWithStyle;
+class LayoutReplaced;
+class LoadRequest;
 class MouseEvent;
 class Node;
 class Origin;
+class Page;
+class PageClient;
+class PaintContext;
+class Resource;
+class ResourceLoader;
 class Selector;
+class StackingContext;
 class StyleResolver;
 class StyleRule;
 class StyleSheet;
 class Text;
+class Timer;
 class Window;
 class XMLHttpRequest;
+enum class QuirksMode;
 
-namespace Bindings {
+}
+
+namespace Web::Bindings {
 
 class CanvasRenderingContext2DWrapper;
 class DocumentWrapper;
+class DocumentTypeWrapper;
 class ElementWrapper;
 class EventWrapper;
 class EventListenerWrapper;
 class EventTargetWrapper;
 class HTMLCanvasElementWrapper;
+class HTMLElementWrapper;
 class HTMLImageElementWrapper;
 class ImageDataWrapper;
+class LocationObject;
 class MouseEventWrapper;
 class NodeWrapper;
 class WindowObject;
@@ -75,7 +99,5 @@ class Wrapper;
 class XMLHttpRequestConstructor;
 class XMLHttpRequestPrototype;
 class XMLHttpRequestWrapper;
-
-}
 
 }

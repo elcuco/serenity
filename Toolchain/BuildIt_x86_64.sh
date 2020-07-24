@@ -41,8 +41,8 @@ BINUTILS_NAME="binutils-$BINUTILS_VERSION"
 BINUTILS_PKG="${BINUTILS_NAME}.tar.gz"
 BINUTILS_BASE_URL="http://ftp.gnu.org/gnu/binutils"
 
-GCC_VERSION="9.3.0"
-GCC_MD5SUM="9b7e8f6cfad96114e726c752935af58a"
+GCC_VERSION="10.1.0"
+GCC_MD5SUM="8a9fbd7e24d04c5d36e96bc894d3cd6b"
 GCC_NAME="gcc-$GCC_VERSION"
 GCC_PKG="${GCC_NAME}.tar.gz"
 GCC_BASE_URL="http://ftp.gnu.org/gnu/gcc"
@@ -52,7 +52,7 @@ pushd "$DIR/Tarballs"
     echo "bu md5='$md5'"
     if [ ! -e $BINUTILS_PKG ] || [ "$md5" != ${BINUTILS_MD5SUM} ] ; then
         rm -f $BINUTILS_PKG
-        wget "$BINUTILS_BASE_URL/$BINUTILS_PKG"
+        curl -LO "$BINUTILS_BASE_URL/$BINUTILS_PKG"
     else
         echo "Skipped downloading binutils"
     fi
@@ -61,7 +61,7 @@ pushd "$DIR/Tarballs"
     echo "gc md5='$md5'"
     if [ ! -e $GCC_PKG ] || [ "$md5" != ${GCC_MD5SUM} ] ; then
         rm -f $GCC_PKG
-        wget "$GCC_BASE_URL/$GCC_NAME/$GCC_PKG"
+        curl -LO "$GCC_BASE_URL/$GCC_NAME/$GCC_PKG"
     else
         echo "Skipped downloading gcc"
     fi

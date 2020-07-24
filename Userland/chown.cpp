@@ -48,15 +48,20 @@ int main(int argc, char** argv)
     uid_t new_uid = -1;
     gid_t new_gid = -1;
 
-    auto parts = String(argv[1]).split(':');
+    auto parts = String(argv[1]).split(':', true);
     if (parts.is_empty()) {
         fprintf(stderr, "Empty uid/gid spec\n");
         return 1;
     }
+    if (parts[0].is_empty() || (parts.size() == 2 && parts[1].is_empty()) || parts.size() > 2) {
+        fprintf(stderr, "Invalid uid/gid spec\n");
+        return 1;
+    }
 
-    bool ok;
-    new_uid = parts[0].to_uint(ok);
-    if (!ok) {
+    auto number = parts[0].to_uint();
+    if (number.has_value()) {
+        new_uid = number.value();
+    } else {
         auto* passwd = getpwnam(parts[0].characters());
         if (!passwd) {
             fprintf(stderr, "Unknown user '%s'\n", parts[0].characters());
@@ -66,10 +71,12 @@ int main(int argc, char** argv)
     }
 
     if (parts.size() == 2) {
-        new_gid = parts[1].to_uint(ok);
-        if (!ok) {
+        auto number = parts[1].to_uint();
+        if (number.has_value()) {
+            new_gid = number.value();
+        } else {
             auto* group = getgrnam(parts[1].characters());
-            if (!new_gid) {
+            if (!group) {
                 fprintf(stderr, "Unknown group '%s'\n", parts[1].characters());
                 return 1;
             }

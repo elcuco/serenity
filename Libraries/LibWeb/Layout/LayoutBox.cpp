@@ -27,41 +27,21 @@
 #include <LibGUI/Painter.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/HTMLBodyElement.h>
-#include <LibWeb/Frame.h>
+#include <LibWeb/Frame/Frame.h>
 #include <LibWeb/Layout/LayoutBlock.h>
 #include <LibWeb/Layout/LayoutBox.h>
 
-//#define DRAW_BOXES_AROUND_LAYOUT_NODES
-//#define DRAW_BOXES_AROUND_HOVERED_NODES
-
 namespace Web {
 
-void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::FloatRect& rect, CSS::PropertyID style_property_id, CSS::PropertyID color_property_id, CSS::PropertyID width_property_id)
+void LayoutBox::paint_border(PaintContext& context, Edge edge, const Gfx::FloatRect& rect, CSS::PropertyID style_property_id, const BorderData& border_data)
 {
-    auto border_width = style().property(width_property_id);
-    if (!border_width.has_value())
-        return;
-
-    auto border_style = style().property(style_property_id);
-    float width = border_width.value()->to_length().to_px();
+    float width = border_data.width;
     if (width <= 0)
         return;
 
+    auto color = border_data.color;
+    auto border_style = specified_style().property(style_property_id);
     int int_width = max((int)width, 1);
-
-    Color color;
-    auto border_color = style().property(color_property_id);
-    if (border_color.has_value()) {
-        color = border_color.value()->to_color(document());
-    } else {
-        // FIXME: This is basically CSS "currentColor" which should be handled elsewhere
-        //        in a much more reusable way.
-        auto current_color = style().property(CSS::PropertyID::Color);
-        if (current_color.has_value())
-            color = current_color.value()->to_color(document());
-        else
-            color = Color::Black;
-    }
 
     auto first_point_for_edge = [](Edge edge, const Gfx::FloatRect& rect) {
         switch (edge) {
@@ -139,20 +119,13 @@ void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::Fl
         context.painter().draw_line({ (int)p1.x(), (int)p1.y() }, { (int)p2.x(), (int)p2.y() }, color, 1, line_style);
     };
 
-    auto width_for = [&](CSS::PropertyID property_id) -> float {
-        auto width = style().property(property_id);
-        if (!width.has_value())
-            return 0;
-        return width.value()->to_length().to_px();
-    };
-
     float p1_step = 0;
     float p2_step = 0;
 
     switch (edge) {
     case Edge::Top:
-        p1_step = width_for(CSS::PropertyID::BorderLeftWidth) / (float)int_width;
-        p2_step = width_for(CSS::PropertyID::BorderRightWidth) / (float)int_width;
+        p1_step = style().border_left().width / (float)int_width;
+        p2_step = style().border_right().width / (float)int_width;
         for (int i = 0; i < int_width; ++i) {
             draw_line(p1, p2);
             p1.move_by(p1_step, 1);
@@ -160,8 +133,8 @@ void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::Fl
         }
         break;
     case Edge::Right:
-        p1_step = width_for(CSS::PropertyID::BorderTopWidth) / (float)int_width;
-        p2_step = width_for(CSS::PropertyID::BorderBottomWidth) / (float)int_width;
+        p1_step = style().border_top().width / (float)int_width;
+        p2_step = style().border_bottom().width / (float)int_width;
         for (int i = int_width - 1; i >= 0; --i) {
             draw_line(p1, p2);
             p1.move_by(-1, p1_step);
@@ -169,8 +142,8 @@ void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::Fl
         }
         break;
     case Edge::Bottom:
-        p1_step = width_for(CSS::PropertyID::BorderLeftWidth) / (float)int_width;
-        p2_step = width_for(CSS::PropertyID::BorderRightWidth) / (float)int_width;
+        p1_step = style().border_left().width / (float)int_width;
+        p2_step = style().border_right().width / (float)int_width;
         for (int i = int_width - 1; i >= 0; --i) {
             draw_line(p1, p2);
             p1.move_by(p1_step, -1);
@@ -178,8 +151,8 @@ void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::Fl
         }
         break;
     case Edge::Left:
-        p1_step = width_for(CSS::PropertyID::BorderTopWidth) / (float)int_width;
-        p2_step = width_for(CSS::PropertyID::BorderBottomWidth) / (float)int_width;
+        p1_step = style().border_top().width / (float)int_width;
+        p2_step = style().border_bottom().width / (float)int_width;
         for (int i = 0; i < int_width; ++i) {
             draw_line(p1, p2);
             p1.move_by(1, p1_step);
@@ -189,32 +162,29 @@ void LayoutBox::paint_border(RenderingContext& context, Edge edge, const Gfx::Fl
     }
 }
 
-void LayoutBox::render(RenderingContext& context)
+void LayoutBox::paint(PaintContext& context, PaintPhase phase)
 {
     if (!is_visible())
         return;
 
-#ifdef DRAW_BOXES_AROUND_LAYOUT_NODES
-    context.painter().draw_rect(m_rect, Color::Blue);
-#endif
-#ifdef DRAW_BOXES_AROUND_HOVERED_NODES
-    if (!is_anonymous() && node() == document().hovered_node())
-        context.painter().draw_rect(m_rect, Color::Red);
-#endif
+    Gfx::PainterStateSaver saver(context.painter());
+    if (is_fixed_position())
+        context.painter().translate(context.scroll_offset());
 
     Gfx::FloatRect padded_rect;
-    padded_rect.set_x(x() - box_model().padding().left.to_px());
-    padded_rect.set_width(width() + box_model().padding().left.to_px() + box_model().padding().right.to_px());
-    padded_rect.set_y(y() - box_model().padding().top.to_px());
-    padded_rect.set_height(height() + box_model().padding().top.to_px() + box_model().padding().bottom.to_px());
+    padded_rect.set_x(absolute_x() - box_model().padding.left.to_px(*this));
+    padded_rect.set_width(width() + box_model().padding.left.to_px(*this) + box_model().padding.right.to_px(*this));
+    padded_rect.set_y(absolute_y() - box_model().padding.top.to_px(*this));
+    padded_rect.set_height(height() + box_model().padding.top.to_px(*this) + box_model().padding.bottom.to_px(*this));
 
-    if (!is_body()) {
-        auto bgcolor = style().property(CSS::PropertyID::BackgroundColor);
+    if (phase == PaintPhase::Background && !is_body()) {
+        // FIXME: We should paint the body here too, but that currently happens at the view layer.
+        auto bgcolor = specified_style().property(CSS::PropertyID::BackgroundColor);
         if (bgcolor.has_value() && bgcolor.value()->is_color()) {
             context.painter().fill_rect(enclosing_int_rect(padded_rect), bgcolor.value()->to_color(document()));
         }
 
-        auto bgimage = style().property(CSS::PropertyID::BackgroundImage);
+        auto bgimage = specified_style().property(CSS::PropertyID::BackgroundImage);
         if (bgimage.has_value() && bgimage.value()->is_image()) {
             auto& image_value = static_cast<const ImageStyleValue&>(*bgimage.value());
             if (image_value.bitmap()) {
@@ -223,30 +193,46 @@ void LayoutBox::render(RenderingContext& context)
         }
     }
 
-    Gfx::FloatRect bordered_rect;
-    bordered_rect.set_x(padded_rect.x() - box_model().border().left.to_px());
-    bordered_rect.set_width(padded_rect.width() + box_model().border().left.to_px() + box_model().border().right.to_px());
-    bordered_rect.set_y(padded_rect.y() - box_model().border().top.to_px());
-    bordered_rect.set_height(padded_rect.height() + box_model().border().top.to_px() + box_model().border().bottom.to_px());
+    if (phase == PaintPhase::Border) {
+        Gfx::FloatRect bordered_rect;
+        bordered_rect.set_x(padded_rect.x() - box_model().border.left.to_px(*this));
+        bordered_rect.set_width(padded_rect.width() + box_model().border.left.to_px(*this) + box_model().border.right.to_px(*this));
+        bordered_rect.set_y(padded_rect.y() - box_model().border.top.to_px(*this));
+        bordered_rect.set_height(padded_rect.height() + box_model().border.top.to_px(*this) + box_model().border.bottom.to_px(*this));
 
-    paint_border(context, Edge::Left, bordered_rect, CSS::PropertyID::BorderLeftStyle, CSS::PropertyID::BorderLeftColor, CSS::PropertyID::BorderLeftWidth);
-    paint_border(context, Edge::Right, bordered_rect, CSS::PropertyID::BorderRightStyle, CSS::PropertyID::BorderRightColor, CSS::PropertyID::BorderRightWidth);
-    paint_border(context, Edge::Top, bordered_rect, CSS::PropertyID::BorderTopStyle, CSS::PropertyID::BorderTopColor, CSS::PropertyID::BorderTopWidth);
-    paint_border(context, Edge::Bottom, bordered_rect, CSS::PropertyID::BorderBottomStyle, CSS::PropertyID::BorderBottomColor, CSS::PropertyID::BorderBottomWidth);
+        paint_border(context, Edge::Left, bordered_rect, CSS::PropertyID::BorderLeftStyle, style().border_left());
+        paint_border(context, Edge::Right, bordered_rect, CSS::PropertyID::BorderRightStyle, style().border_right());
+        paint_border(context, Edge::Top, bordered_rect, CSS::PropertyID::BorderTopStyle, style().border_top());
+        paint_border(context, Edge::Bottom, bordered_rect, CSS::PropertyID::BorderBottomStyle, style().border_bottom());
+    }
 
-    LayoutNodeWithStyleAndBoxModelMetrics::render(context);
+    LayoutNodeWithStyleAndBoxModelMetrics::paint(context, phase);
 
-    if (node() && document().inspected_node() == node())
-        context.painter().draw_rect(enclosing_int_rect(m_rect), Color::Magenta);
+    if (phase == PaintPhase::Overlay && node() && document().inspected_node() == node()) {
+        auto content_rect = absolute_rect();
+
+        auto margin_box = box_model().margin_box(*this);
+        Gfx::FloatRect margin_rect;
+        margin_rect.set_x(absolute_x() - margin_box.left);
+        margin_rect.set_width(width() + margin_box.left + margin_box.right);
+        margin_rect.set_y(absolute_y() - margin_box.top);
+        margin_rect.set_height(height() + margin_box.top + margin_box.bottom);
+
+        context.painter().draw_rect(enclosing_int_rect(margin_rect), Color::Yellow);
+        context.painter().draw_rect(enclosing_int_rect(padded_rect), Color::Cyan);
+        context.painter().draw_rect(enclosing_int_rect(content_rect), Color::Magenta);
+    }
 }
 
-HitTestResult LayoutBox::hit_test(const Gfx::Point& position) const
+HitTestResult LayoutBox::hit_test(const Gfx::IntPoint& position) const
 {
     // FIXME: It would be nice if we could confidently skip over hit testing
     //        parts of the layout tree, but currently we can't just check
     //        m_rect.contains() since inline text rects can't be trusted..
-    HitTestResult result { m_rect.contains(position.x(), position.y()) ? this : nullptr };
+    HitTestResult result { absolute_rect().contains(position.x(), position.y()) ? this : nullptr };
     for_each_child([&](auto& child) {
+        if (is<LayoutBox>(child) && to<LayoutBox>(child).stacking_context())
+            return;
         auto child_result = child.hit_test(position);
         if (child_result.layout_node)
             result = child_result;
@@ -256,11 +242,8 @@ HitTestResult LayoutBox::hit_test(const Gfx::Point& position) const
 
 void LayoutBox::set_needs_display()
 {
-    auto* frame = document().frame();
-    ASSERT(frame);
-
     if (!is_inline()) {
-        const_cast<Frame*>(frame)->set_needs_display(enclosing_int_rect(rect()));
+        frame().set_needs_display(enclosing_int_rect(absolute_rect()));
         return;
     }
 
@@ -270,6 +253,75 @@ void LayoutBox::set_needs_display()
 bool LayoutBox::is_body() const
 {
     return node() && node() == document().body();
+}
+
+void LayoutBox::set_offset(const Gfx::FloatPoint& offset)
+{
+    if (m_offset == offset)
+        return;
+    m_offset = offset;
+    did_set_rect();
+}
+
+void LayoutBox::set_size(const Gfx::FloatSize& size)
+{
+    if (m_size == size)
+        return;
+    m_size = size;
+    did_set_rect();
+}
+
+Gfx::FloatPoint LayoutBox::effective_offset() const
+{
+    if (m_containing_line_box_fragment)
+        return m_containing_line_box_fragment->offset();
+    return m_offset;
+}
+
+const Gfx::FloatRect LayoutBox::absolute_rect() const
+{
+    Gfx::FloatRect rect { effective_offset(), size() };
+    for (auto* block = containing_block(); block; block = block->containing_block()) {
+        rect.move_by(block->effective_offset());
+    }
+    return rect;
+}
+
+void LayoutBox::set_containing_line_box_fragment(LineBoxFragment& fragment)
+{
+    m_containing_line_box_fragment = fragment.make_weak_ptr();
+}
+
+StackingContext* LayoutBox::enclosing_stacking_context()
+{
+    for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
+        if (!ancestor->is_box())
+            continue;
+        auto& ancestor_box = to<LayoutBox>(*ancestor);
+        if (!ancestor_box.establishes_stacking_context())
+            continue;
+        ASSERT(ancestor_box.stacking_context());
+        return ancestor_box.stacking_context();
+    }
+    // We should always reach the LayoutDocument stacking context.
+    ASSERT_NOT_REACHED();
+}
+
+bool LayoutBox::establishes_stacking_context() const
+{
+    if (!has_style())
+        return false;
+    if (node() == document().root())
+        return true;
+    auto position = style().position();
+    auto z_index = style().z_index();
+    if (position == CSS::Position::Absolute || position == CSS::Position::Relative) {
+        if (z_index.has_value())
+            return true;
+    }
+    if (position == CSS::Position::Fixed || position == CSS::Position::Sticky)
+        return true;
+    return false;
 }
 
 }

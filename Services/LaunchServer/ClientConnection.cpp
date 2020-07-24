@@ -25,16 +25,16 @@
  */
 
 #include "ClientConnection.h"
-#include "LaunchClientEndpoint.h"
 #include "Launcher.h"
 #include <AK/HashMap.h>
 #include <AK/URL.h>
+#include <LaunchServer/LaunchClientEndpoint.h>
 
 namespace LaunchServer {
 
 static HashMap<int, RefPtr<ClientConnection>> s_connections;
-ClientConnection::ClientConnection(Core::LocalSocket& client_socket, int client_id)
-    : IPC::ClientConnection<LaunchServerEndpoint>(*this, client_socket, client_id)
+ClientConnection::ClientConnection(NonnullRefPtr<Core::LocalSocket> client_socket, int client_id)
+    : IPC::ClientConnection<LaunchServerEndpoint>(*this, move(client_socket), client_id)
 {
     s_connections.set(client_id, *this);
 }
@@ -53,10 +53,25 @@ OwnPtr<Messages::LaunchServer::GreetResponse> ClientConnection::handle(const Mes
     return make<Messages::LaunchServer::GreetResponse>(client_id());
 }
 
-OwnPtr<Messages::LaunchServer::OpenUrlResponse> ClientConnection::handle(const Messages::LaunchServer::OpenUrl& request)
+OwnPtr<Messages::LaunchServer::OpenURLResponse> ClientConnection::handle(const Messages::LaunchServer::OpenURL& request)
 {
     URL url(request.url());
-    auto result = Launcher::the().open_url(url);
-    return make<Messages::LaunchServer::OpenUrlResponse>(result);
+    auto result = Launcher::the().open_url(url, request.handler_name());
+    return make<Messages::LaunchServer::OpenURLResponse>(result);
 }
+
+OwnPtr<Messages::LaunchServer::GetHandlersForURLResponse> ClientConnection::handle(const Messages::LaunchServer::GetHandlersForURL& request)
+{
+    URL url(request.url());
+    auto result = Launcher::the().handlers_for_url(url);
+    return make<Messages::LaunchServer::GetHandlersForURLResponse>(result);
+}
+
+OwnPtr<Messages::LaunchServer::GetHandlersWithDetailsForURLResponse> ClientConnection::handle(const Messages::LaunchServer::GetHandlersWithDetailsForURL& request)
+{
+    URL url(request.url());
+    auto result = Launcher::the().handlers_with_details_for_url(url);
+    return make<Messages::LaunchServer::GetHandlersWithDetailsForURLResponse>(result);
+}
+
 }

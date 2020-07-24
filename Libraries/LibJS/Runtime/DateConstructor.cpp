@@ -34,13 +34,18 @@
 
 namespace JS {
 
-DateConstructor::DateConstructor()
-    : NativeFunction("Date", *interpreter().global_object().function_prototype())
+DateConstructor::DateConstructor(GlobalObject& global_object)
+    : NativeFunction("Date", *global_object.function_prototype())
 {
-    put("prototype", interpreter().global_object().date_prototype(), 0);
-    put("length", Value(7), Attribute::Configurable);
+}
 
-    put_native_function("now", now, 0, Attribute::Writable | Attribute::Configurable);
+void DateConstructor::initialize(GlobalObject& global_object)
+{
+    NativeFunction::initialize(global_object);
+    define_property("prototype", global_object.date_prototype(), 0);
+    define_property("length", Value(7), Attribute::Configurable);
+
+    define_native_function("now", now, 0, Attribute::Writable | Attribute::Configurable);
 }
 
 DateConstructor::~DateConstructor()
@@ -49,23 +54,23 @@ DateConstructor::~DateConstructor()
 
 Value DateConstructor::call(Interpreter& interpreter)
 {
-    auto date = construct(interpreter);
+    auto date = construct(interpreter, *this);
     if (!date.is_object())
         return {};
     return js_string(interpreter, static_cast<Date&>(date.as_object()).string());
 }
 
-Value DateConstructor::construct(Interpreter& interpreter)
+Value DateConstructor::construct(Interpreter&, Function&)
 {
     // TODO: Support args
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     auto datetime = Core::DateTime::now();
     auto milliseconds = static_cast<u16>(tv.tv_usec / 1000);
-    return Date::create(interpreter.global_object(), datetime, milliseconds);
+    return Date::create(global_object(), datetime, milliseconds);
 }
 
-Value DateConstructor::now(Interpreter&)
+JS_DEFINE_NATIVE_FUNCTION(DateConstructor::now)
 {
     struct timeval tv;
     gettimeofday(&tv, nullptr);

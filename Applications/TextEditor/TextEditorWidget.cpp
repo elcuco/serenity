@@ -51,8 +51,7 @@
 #include <LibGUI/ToolBarContainer.h>
 #include <LibGfx/Font.h>
 #include <LibMarkdown/Document.h>
-#include <LibWeb/HtmlView.h>
-#include <LibWeb/Parser/HTMLParser.h>
+#include <LibWeb/PageView.h>
 #include <string.h>
 
 TextEditorWidget::TextEditorWidget()
@@ -72,8 +71,7 @@ TextEditorWidget::TextEditorWidget()
     m_editor->set_line_wrapping_enabled(true);
 
     m_editor->on_change = [this] {
-        if (m_markdown_preview_enabled)
-            update_markdown_preview();
+        update_preview();
 
         // Do not mark as dirty on the first change (When document is first opened.)
         if (m_document_opening) {
@@ -87,8 +85,8 @@ TextEditorWidget::TextEditorWidget()
             update_title();
     };
 
-    m_html_view = splitter.add<Web::HtmlView>();
-    m_html_view->set_visible(false);
+    m_page_view = splitter.add<Web::PageView>();
+    m_page_view->set_visible(false);
 
     m_find_replace_widget = add<GUI::Widget>();
     m_find_replace_widget->set_fill_with_background_color(true);
@@ -126,11 +124,10 @@ TextEditorWidget::TextEditorWidget()
         if (found_range.is_valid()) {
             m_editor->set_selection(found_range);
         } else {
-            GUI::MessageBox::show(
+            GUI::MessageBox::show(window(),
                 String::format("Not found: \"%s\"", needle.characters()),
                 "Not found",
-                GUI::MessageBox::Type::Information,
-                GUI::MessageBox::InputType::OK, window());
+                GUI::MessageBox::Type::Information);
         }
     });
 
@@ -151,11 +148,10 @@ TextEditorWidget::TextEditorWidget()
         if (found_range.is_valid()) {
             m_editor->set_selection(found_range);
         } else {
-            GUI::MessageBox::show(
+            GUI::MessageBox::show(window(),
                 String::format("Not found: \"%s\"", needle.characters()),
                 "Not found",
-                GUI::MessageBox::Type::Information,
-                GUI::MessageBox::InputType::OK, window());
+                GUI::MessageBox::Type::Information);
         }
     });
 
@@ -176,11 +172,10 @@ TextEditorWidget::TextEditorWidget()
             m_editor->set_selection(found_range);
             m_editor->insert_at_cursor_or_replace_selection(substitute);
         } else {
-            GUI::MessageBox::show(
+            GUI::MessageBox::show(window(),
                 String::format("Not found: \"%s\"", needle.characters()),
                 "Not found",
-                GUI::MessageBox::Type::Information,
-                GUI::MessageBox::InputType::OK, window());
+                GUI::MessageBox::Type::Information);
         }
     });
 
@@ -200,11 +195,10 @@ TextEditorWidget::TextEditorWidget()
             m_editor->set_selection(found_range);
             m_editor->insert_at_cursor_or_replace_selection(substitute);
         } else {
-            GUI::MessageBox::show(
+            GUI::MessageBox::show(window(),
                 String::format("Not found: \"%s\"", needle.characters()),
                 "Not found",
-                GUI::MessageBox::Type::Information,
-                GUI::MessageBox::InputType::OK, window());
+                GUI::MessageBox::Type::Information);
         }
     });
 
@@ -292,7 +286,7 @@ TextEditorWidget::TextEditorWidget()
 
     m_new_action = GUI::Action::create("New", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"), [this](const GUI::Action&) {
         if (m_document_dirty) {
-            auto save_document_first_result = GUI::MessageBox::show("Save Document First?", "Warning", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel);
+            auto save_document_first_result = GUI::MessageBox::show(window(), "Save Document First?", "Warning", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel);
             if (save_document_first_result == GUI::Dialog::ExecResult::ExecYes)
                 m_save_action->activate();
             if (save_document_first_result == GUI::Dialog::ExecResult::ExecCancel)
@@ -301,18 +295,18 @@ TextEditorWidget::TextEditorWidget()
 
         m_document_dirty = false;
         m_editor->set_text(StringView());
-        set_path(FileSystemPath());
+        set_path(LexicalPath());
         update_title();
     });
 
     m_open_action = GUI::CommonActions::make_open_action([this](auto&) {
-        Optional<String> open_path = GUI::FilePicker::get_open_filepath();
+        Optional<String> open_path = GUI::FilePicker::get_open_filepath(window());
 
         if (!open_path.has_value())
             return;
 
         if (m_document_dirty) {
-            auto save_document_first_result = GUI::MessageBox::show("Save Document First?", "Warning", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel, window());
+            auto save_document_first_result = GUI::MessageBox::show(window(), "Save Document First?", "Warning", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel);
             if (save_document_first_result == GUI::Dialog::ExecResult::ExecYes)
                 m_save_action->activate();
             if (save_document_first_result == GUI::Dialog::ExecResult::ExecCancel)
@@ -323,24 +317,24 @@ TextEditorWidget::TextEditorWidget()
     });
 
     m_save_as_action = GUI::Action::create("Save as...", { Mod_Ctrl | Mod_Shift, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/save.png"), [this](const GUI::Action&) {
-        Optional<String> save_path = GUI::FilePicker::get_save_filepath(m_name.is_null() ? "Untitled" : m_name, m_extension.is_null() ? "txt" : m_extension);
+        Optional<String> save_path = GUI::FilePicker::get_save_filepath(window(), m_name.is_null() ? "Untitled" : m_name, m_extension.is_null() ? "txt" : m_extension);
         if (!save_path.has_value())
             return;
 
         if (!m_editor->write_to_file(save_path.value())) {
-            GUI::MessageBox::show("Unable to save file.\n", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+            GUI::MessageBox::show(window(), "Unable to save file.\n", "Error", GUI::MessageBox::Type::Error);
             return;
         }
 
         m_document_dirty = false;
-        set_path(FileSystemPath(save_path.value()));
+        set_path(LexicalPath(save_path.value()));
         dbg() << "Wrote document to " << save_path.value();
     });
 
     m_save_action = GUI::Action::create("Save", { Mod_Ctrl, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/save.png"), [&](const GUI::Action&) {
         if (!m_path.is_empty()) {
             if (!m_editor->write_to_file(m_path)) {
-                GUI::MessageBox::show("Unable to save file.\n", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+                GUI::MessageBox::show(window(), "Unable to save file.\n", "Error", GUI::MessageBox::Type::Error);
             } else {
                 m_document_dirty = false;
                 update_title();
@@ -366,7 +360,7 @@ TextEditorWidget::TextEditorWidget()
     app_menu.add_action(GUI::CommonActions::make_quit_action([this](auto&) {
         if (!request_close())
             return;
-        GUI::Application::the().quit(0);
+        GUI::Application::the()->quit();
     }));
 
     auto& edit_menu = menubar->add_menu("Edit");
@@ -385,16 +379,34 @@ TextEditorWidget::TextEditorWidget()
     edit_menu.add_action(*m_replace_previous_action);
     edit_menu.add_action(*m_replace_all_action);
 
+    m_no_preview_action = GUI::Action::create_checkable(
+        "No preview", [this](auto&) {
+            set_preview_mode(PreviewMode::None);
+        });
+
     m_markdown_preview_action = GUI::Action::create_checkable(
-        "Markdown preview", [this](auto& action) {
-            set_markdown_preview_enabled(action.is_checked());
+        "Markdown preview", [this](auto&) {
+            set_preview_mode(PreviewMode::Markdown);
         },
         this);
+
+    m_html_preview_action = GUI::Action::create_checkable(
+        "HTML preview", [this](auto&) {
+            set_preview_mode(PreviewMode::HTML);
+        },
+        this);
+
+    m_preview_actions.add_action(*m_no_preview_action);
+    m_preview_actions.add_action(*m_markdown_preview_action);
+    m_preview_actions.add_action(*m_html_preview_action);
+    m_preview_actions.set_exclusive(true);
 
     auto& view_menu = menubar->add_menu("View");
     view_menu.add_action(*m_line_wrapping_setting_action);
     view_menu.add_separator();
+    view_menu.add_action(*m_no_preview_action);
     view_menu.add_action(*m_markdown_preview_action);
+    view_menu.add_action(*m_html_preview_action);
     view_menu.add_separator();
 
     auto& font_menu = view_menu.add_submenu("Font");
@@ -439,10 +451,10 @@ TextEditorWidget::TextEditorWidget()
 
     auto& help_menu = menubar->add_menu("Help");
     help_menu.add_action(GUI::Action::create("About", [&](auto&) {
-        GUI::AboutDialog::show("Text Editor", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-texteditor.png"), window());
+        GUI::AboutDialog::show("Text Editor", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-text-editor.png"), window());
     }));
 
-    GUI::Application::the().set_menubar(move(menubar));
+    GUI::Application::the()->set_menubar(move(menubar));
 
     toolbar.add_action(*m_new_action);
     toolbar.add_action(*m_open_action);
@@ -465,13 +477,14 @@ TextEditorWidget::~TextEditorWidget()
 {
 }
 
-void TextEditorWidget::set_path(const FileSystemPath& file)
+void TextEditorWidget::set_path(const LexicalPath& lexical_path)
 {
-    m_path = file.string();
-    m_name = file.title();
-    m_extension = file.extension();
+    m_path = lexical_path.string();
+    m_name = lexical_path.title();
+    m_extension = lexical_path.extension();
 
-    if (m_extension == "cpp" || m_extension == "h") {
+    if (m_extension == "c" || m_extension == "cc" || m_extension == "cxx" ||
+        m_extension == "cpp" || m_extension == "h") {
         m_cpp_highlight->activate();
     } else if (m_extension == "js" || m_extension == "json") {
         m_js_highlight->activate();
@@ -481,7 +494,14 @@ void TextEditorWidget::set_path(const FileSystemPath& file)
         m_plain_text_highlight->activate();
     }
 
-    set_markdown_preview_enabled(m_extension == "md");
+    if (m_auto_detect_preview_mode) {
+        if (m_extension == "md")
+            set_preview_mode(PreviewMode::Markdown);
+        else if (m_extension == "html")
+            set_preview_mode(PreviewMode::HTML);
+        else
+            set_preview_mode(PreviewMode::None);
+    }
 
     update_title();
 }
@@ -499,8 +519,8 @@ void TextEditorWidget::update_title()
 void TextEditorWidget::open_sesame(const String& path)
 {
     auto file = Core::File::construct(path);
-    if (!file->open(Core::IODevice::ReadOnly)) {
-        GUI::MessageBox::show(String::format("Opening \"%s\" failed: %s", path.characters(), strerror(errno)), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+    if (!file->open(Core::IODevice::ReadOnly) && file->error() != ENOENT) {
+        GUI::MessageBox::show(window(), String::format("Opening \"%s\" failed: %s", path.characters(), strerror(errno)), "Error", GUI::MessageBox::Type::Error);
         return;
     }
 
@@ -508,7 +528,7 @@ void TextEditorWidget::open_sesame(const String& path)
     m_document_dirty = false;
     m_document_opening = true;
 
-    set_path(FileSystemPath(path));
+    set_path(LexicalPath(path));
 
     m_editor->set_focus(true);
 }
@@ -517,7 +537,7 @@ bool TextEditorWidget::request_close()
 {
     if (!m_document_dirty)
         return true;
-    auto result = GUI::MessageBox::show("The document has been modified. Would you like to save?", "Unsaved changes", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel, window());
+    auto result = GUI::MessageBox::show(window(), "The document has been modified. Would you like to save?", "Unsaved changes", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::YesNoCancel);
 
     if (result == GUI::MessageBox::ExecYes) {
         m_save_action->activate();
@@ -540,30 +560,61 @@ void TextEditorWidget::drop_event(GUI::DropEvent& event)
         if (urls.is_empty())
             return;
         if (urls.size() > 1) {
-            GUI::MessageBox::show("TextEditor can only open one file at a time!", "One at a time please!", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+            GUI::MessageBox::show(window(), "TextEditor can only open one file at a time!", "One at a time please!", GUI::MessageBox::Type::Error);
             return;
         }
         open_sesame(urls.first().path());
     }
 }
 
-void TextEditorWidget::set_markdown_preview_enabled(bool enabled)
+void TextEditorWidget::set_preview_mode(PreviewMode mode)
 {
-    if (m_markdown_preview_enabled == enabled)
+    if (m_preview_mode == mode)
         return;
-    m_markdown_preview_enabled = enabled;
-    m_markdown_preview_action->set_checked(enabled);
-    m_html_view->set_visible(enabled);
-    if (enabled)
+    m_preview_mode = mode;
+
+    if (m_preview_mode == PreviewMode::HTML) {
+        m_html_preview_action->set_checked(true);
+        m_page_view->set_visible(true);
+        update_html_preview();
+    } else if (m_preview_mode == PreviewMode::Markdown) {
+        m_markdown_preview_action->set_checked(true);
+        m_page_view->set_visible(true);
         update_markdown_preview();
+    } else {
+        m_no_preview_action->set_checked(true);
+        m_page_view->set_visible(false);
+    }
+}
+
+void TextEditorWidget::update_preview()
+{
+    switch (m_preview_mode) {
+    case PreviewMode::Markdown:
+        update_markdown_preview();
+        break;
+    case PreviewMode::HTML:
+        update_html_preview();
+        break;
+    default:
+        break;
+    }
 }
 
 void TextEditorWidget::update_markdown_preview()
 {
-    Markdown::Document document;
-    if (document.parse(m_editor->text())) {
-        auto html = document.render_to_html();
-        auto html_document = Web::parse_html_document(html, URL::create_with_file_protocol(m_path));
-        m_html_view->set_document(html_document);
+    auto document = Markdown::Document::parse(m_editor->text());
+    if (document) {
+        auto html = document->render_to_html();
+        auto current_scroll_pos = m_page_view->visible_content_rect();
+        m_page_view->load_html(html, URL::create_with_file_protocol(m_path));
+        m_page_view->scroll_into_view(current_scroll_pos, true, true);
     }
+}
+
+void TextEditorWidget::update_html_preview()
+{
+    auto current_scroll_pos = m_page_view->visible_content_rect();
+    m_page_view->load_html(m_editor->text(), URL::create_with_file_protocol(m_path));
+    m_page_view->scroll_into_view(current_scroll_pos, true, true);
 }

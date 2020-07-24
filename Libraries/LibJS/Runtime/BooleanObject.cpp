@@ -33,11 +33,11 @@ namespace JS {
 BooleanObject* BooleanObject::create(GlobalObject& global_object, bool value)
 {
     auto& interpreter = global_object.interpreter();
-    return interpreter.heap().allocate<BooleanObject>(value, *global_object.boolean_prototype());
+    return interpreter.heap().allocate<BooleanObject>(global_object, value, *global_object.boolean_prototype());
 }
 
 BooleanObject::BooleanObject(bool value, Object& prototype)
-    : Object(&prototype)
+    : Object(prototype)
     , m_value(value)
 {
 }

@@ -39,7 +39,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
     auto server = Core::LocalServer::construct();
 
     bool ok = server->take_over_from_system_server();
@@ -52,7 +52,7 @@ int main(int argc, char** argv)
         }
         static int s_next_client_id = 0;
         int client_id = ++s_next_client_id;
-        IPC::new_client_connection<NotificationServer::ClientConnection>(*client_socket, client_id);
+        IPC::new_client_connection<NotificationServer::ClientConnection>(client_socket.release_nonnull(), client_id);
     };
 
     if (unveil("/res", "r") < 0) {
@@ -67,5 +67,5 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    return app.exec();
+    return app->exec();
 }

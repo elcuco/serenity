@@ -42,8 +42,9 @@ MasterPTY::MasterPTY(unsigned index)
     , m_index(index)
 {
     m_pts_name = String::format("/dev/pts/%u", m_index);
-    set_uid(Process::current->uid());
-    set_gid(Process::current->gid());
+    auto process = Process::current();
+    set_uid(process->uid());
+    set_gid(process->gid());
 }
 
 MasterPTY::~MasterPTY()
@@ -112,7 +113,7 @@ bool MasterPTY::can_write_from_slave() const
     return m_buffer.space_for_writing();
 }
 
-void MasterPTY::close()
+KResult MasterPTY::close()
 {
     if (ref_count() == 2) {
         InterruptDisabler disabler;
@@ -122,9 +123,11 @@ void MasterPTY::close()
 
         m_slave->hang_up();
     }
+
+    return KSuccess;
 }
 
-int MasterPTY::ioctl(FileDescription& description, unsigned request, unsigned arg)
+int MasterPTY::ioctl(FileDescription& description, unsigned request, FlatPtr arg)
 {
     REQUIRE_PROMISE(tty);
     if (!m_slave)

@@ -28,7 +28,7 @@
 
 #include <AK/Bitmap.h>
 #include <AK/HashMap.h>
-#include <Kernel/FileSystem/FileBackedFileSystem.h>
+#include <Kernel/FileSystem/BlockBasedFileSystem.h>
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/FileSystem/ext2_fs.h>
 #include <Kernel/KBuffer.h>
@@ -59,11 +59,12 @@ private:
     // ^Inode
     virtual ssize_t read_bytes(off_t, ssize_t, u8* buffer, FileDescription*) const override;
     virtual InodeMetadata metadata() const override;
-    virtual bool traverse_as_directory(Function<bool(const FS::DirectoryEntry&)>) const override;
+    virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntry&)>) const override;
     virtual RefPtr<Inode> lookup(StringView name) override;
     virtual void flush_metadata() override;
     virtual ssize_t write_bytes(off_t, ssize_t, const u8* data, FileDescription*) override;
-    virtual KResult add_child(InodeIdentifier child_id, const StringView& name, mode_t) override;
+    virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) override;
+    virtual KResult add_child(Inode& child, const StringView& name, mode_t) override;
     virtual KResult remove_child(const StringView& name) override;
     virtual int set_atime(time_t) override;
     virtual int set_ctime(time_t) override;
@@ -88,7 +89,7 @@ private:
     ext2_inode m_raw_inode;
 };
 
-class Ext2FS final : public FileBackedFS {
+class Ext2FS final : public BlockBasedFS {
     friend class Ext2FSInode;
 
 public:
@@ -123,15 +124,15 @@ private:
     unsigned inode_size() const;
 
     bool write_ext2_inode(InodeIndex, const ext2_inode&);
-    bool read_block_containing_inode(InodeIndex inode, BlockIndex& block_index, unsigned& offset, u8* buffer) const;
+    bool find_block_containing_inode(InodeIndex inode, BlockIndex& block_index, unsigned& offset) const;
 
     bool flush_super_block();
 
     virtual const char* class_name() const override;
-    virtual InodeIdentifier root_inode() const override;
-    virtual KResultOr<NonnullRefPtr<Inode>> create_inode(InodeIdentifier parent_id, const String& name, mode_t, off_t size, dev_t, uid_t, gid_t) override;
-    virtual KResult create_directory(InodeIdentifier parent_inode, const String& name, mode_t, uid_t, gid_t) override;
-    virtual RefPtr<Inode> get_inode(InodeIdentifier) const override;
+    virtual NonnullRefPtr<Inode> root_inode() const override;
+    RefPtr<Inode> get_inode(InodeIdentifier) const;
+    KResultOr<NonnullRefPtr<Inode>> create_inode(InodeIdentifier parent_id, const String& name, mode_t, off_t size, dev_t, uid_t, gid_t);
+    KResult create_directory(InodeIdentifier parent_inode, const String& name, mode_t, uid_t, gid_t);
     virtual void flush_writes() override;
 
     BlockIndex first_block_index() const;

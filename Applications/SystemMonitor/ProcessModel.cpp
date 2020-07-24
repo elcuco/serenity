@@ -30,6 +30,7 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/SharedBuffer.h>
+#include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -50,6 +51,20 @@ ProcessModel::ProcessModel()
     m_high_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/highpriority16.png");
     m_low_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/lowpriority16.png");
     m_normal_priority_icon = Gfx::Bitmap::load_from_file("/res/icons/normalpriority16.png");
+
+    auto file = Core::File::construct("/proc/cpuinfo");
+    if (file->open(Core::IODevice::ReadOnly)) {
+        auto json = JsonValue::from_string({ file->read_all() });
+        auto cpuinfo_array = json.value().as_array();
+        cpuinfo_array.for_each([&](auto& value) {
+            auto& cpu_object = value.as_object();
+            auto cpu_id = cpu_object.get("processor").as_u32();
+            m_cpus.append(make<CpuInfo>(cpu_id));
+        });
+    }
+
+    if (m_cpus.is_empty())
+        m_cpus.append(make<CpuInfo>(0));
 }
 
 ProcessModel::~ProcessModel()
@@ -97,6 +112,8 @@ String ProcessModel::column_name(int column) const
         return "Purg:N";
     case Column::CPU:
         return "CPU";
+    case Column::Processor:
+        return "Processor";
     case Column::Name:
         return "Name";
     case Column::Syscalls:
@@ -128,68 +145,6 @@ String ProcessModel::column_name(int column) const
     }
 }
 
-GUI::Model::ColumnMetadata ProcessModel::column_metadata(int column) const
-{
-    switch (column) {
-    case Column::Icon:
-        return { 16, Gfx::TextAlignment::CenterLeft };
-    case Column::PID:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::TID:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::State:
-        return { 75, Gfx::TextAlignment::CenterLeft };
-    case Column::Priority:
-        return { 16, Gfx::TextAlignment::CenterRight };
-    case Column::EffectivePriority:
-        return { 16, Gfx::TextAlignment::CenterRight };
-    case Column::User:
-        return { 50, Gfx::TextAlignment::CenterLeft };
-    case Column::Virtual:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::Physical:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::DirtyPrivate:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::CleanInode:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::PurgeableVolatile:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::PurgeableNonvolatile:
-        return { 65, Gfx::TextAlignment::CenterRight };
-    case Column::CPU:
-        return { 32, Gfx::TextAlignment::CenterRight };
-    case Column::Name:
-        return { 140, Gfx::TextAlignment::CenterLeft };
-    case Column::Syscalls:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::InodeFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::ZeroFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::CowFaults:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::FileReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::FileWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::UnixSocketReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::UnixSocketWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::IPv4SocketReadBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::IPv4SocketWriteBytes:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::Pledge:
-        return { 60, Gfx::TextAlignment::CenterLeft };
-    case Column::Veil:
-        return { 60, Gfx::TextAlignment::CenterLeft };
-    default:
-        ASSERT_NOT_REACHED();
-    }
-}
-
 static String pretty_byte_size(size_t size)
 {
     return String::format("%uK", size / 1024);
@@ -198,6 +153,43 @@ static String pretty_byte_size(size_t size)
 GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
 {
     ASSERT(is_valid(index));
+
+    if (role == Role::TextAlignment) {
+        switch (index.column()) {
+        case Column::Icon:
+        case Column::Name:
+        case Column::State:
+        case Column::User:
+        case Column::Pledge:
+        case Column::Veil:
+            return Gfx::TextAlignment::CenterLeft;
+        case Column::PID:
+        case Column::TID:
+        case Column::Priority:
+        case Column::EffectivePriority:
+        case Column::Virtual:
+        case Column::Physical:
+        case Column::DirtyPrivate:
+        case Column::CleanInode:
+        case Column::PurgeableVolatile:
+        case Column::PurgeableNonvolatile:
+        case Column::CPU:
+        case Column::Processor:
+        case Column::Syscalls:
+        case Column::InodeFaults:
+        case Column::ZeroFaults:
+        case Column::CowFaults:
+        case Column::FileReadBytes:
+        case Column::FileWriteBytes:
+        case Column::UnixSocketReadBytes:
+        case Column::UnixSocketWriteBytes:
+        case Column::IPv4SocketReadBytes:
+        case Column::IPv4SocketWriteBytes:
+            return Gfx::TextAlignment::CenterRight;
+        default:
+            ASSERT_NOT_REACHED();
+        }
+    }
 
     auto it = m_threads.find(m_pids[index.row()]);
     auto& thread = *(*it).value;
@@ -232,6 +224,8 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return (int)thread.current_state.amount_purgeable_nonvolatile;
         case Column::CPU:
             return thread.current_state.cpu_percent;
+        case Column::Processor:
+            return thread.current_state.cpu;
         case Column::Name:
             return thread.current_state.name;
         case Column::Syscalls:
@@ -301,6 +295,8 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, Role role) const
             return pretty_byte_size(thread.current_state.amount_purgeable_nonvolatile);
         case Column::CPU:
             return thread.current_state.cpu_percent;
+        case Column::Processor:
+            return thread.current_state.cpu;
         case Column::Name:
             return thread.current_state.name;
         case Column::Syscalls:
@@ -372,6 +368,7 @@ void ProcessModel::update()
 
             state.tid = thread.tid;
             state.times_scheduled = thread.times_scheduled;
+            state.cpu = thread.cpu;
             state.priority = thread.priority;
             state.effective_priority = thread.effective_priority;
             state.state = thread.state;
@@ -391,7 +388,8 @@ void ProcessModel::update()
     }
 
     m_pids.clear();
-    float total_cpu_percent = 0;
+    for (auto& c : m_cpus)
+        c.total_cpu_percent = 0.0;
     Vector<PidAndTid, 16> pids_to_remove;
     for (auto& it : m_threads) {
         if (!live_pids.contains(it.key)) {
@@ -402,15 +400,15 @@ void ProcessModel::update()
         u32 times_scheduled_diff = process.current_state.times_scheduled - process.previous_state.times_scheduled;
         process.current_state.cpu_percent = ((float)times_scheduled_diff * 100) / (float)(sum_times_scheduled - last_sum_times_scheduled);
         if (it.key.pid != 0) {
-            total_cpu_percent += process.current_state.cpu_percent;
+            m_cpus[process.current_state.cpu].total_cpu_percent += process.current_state.cpu_percent;
             m_pids.append(it.key);
         }
     }
     for (auto pid : pids_to_remove)
         m_threads.remove(pid);
 
-    if (on_new_cpu_data_point)
-        on_new_cpu_data_point(total_cpu_percent);
+    if (on_cpu_info_change)
+        on_cpu_info_change(m_cpus);
 
     did_update(GUI::Model::UpdateFlag::DontInvalidateIndexes);
 }

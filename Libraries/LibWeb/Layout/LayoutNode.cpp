@@ -27,14 +27,17 @@
 #include <LibGUI/Painter.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
-#include <LibWeb/Frame.h>
+#include <LibWeb/Frame/Frame.h>
 #include <LibWeb/Layout/LayoutBlock.h>
+#include <LibWeb/Layout/LayoutDocument.h>
 #include <LibWeb/Layout/LayoutNode.h>
+#include <LibWeb/Layout/LayoutReplaced.h>
 
 namespace Web {
 
-LayoutNode::LayoutNode(const Node* node)
-    : m_node(node)
+LayoutNode::LayoutNode(Document& document, const Node* node)
+    : m_document(document)
+    , m_node(node)
 {
     if (m_node)
         m_node->set_layout_node({}, this);
@@ -46,37 +49,67 @@ LayoutNode::~LayoutNode()
         m_node->set_layout_node({}, nullptr);
 }
 
-void LayoutNode::layout()
+void LayoutNode::layout(LayoutMode layout_mode)
 {
-    for_each_child([](auto& child) {
-        child.layout();
+    for_each_child([&](auto& child) {
+        child.layout(layout_mode);
     });
+}
+
+bool LayoutNode::can_contain_boxes_with_position_absolute() const
+{
+    return style().position() != CSS::Position::Static || is_root();
 }
 
 const LayoutBlock* LayoutNode::containing_block() const
 {
-    for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
-        if (is<LayoutBlock>(*ancestor))
-            return to<LayoutBlock>(ancestor);
+    auto nearest_block_ancestor = [this] {
+        auto* ancestor = parent();
+        while (ancestor && !is<LayoutBlock>(*ancestor))
+            ancestor = ancestor->parent();
+        return to<LayoutBlock>(ancestor);
+    };
+
+    if (is_text())
+        return nearest_block_ancestor();
+
+    auto position = style().position();
+
+    if (position == CSS::Position::Absolute) {
+        auto* ancestor = parent();
+        while (ancestor && !ancestor->can_contain_boxes_with_position_absolute())
+            ancestor = ancestor->parent();
+        while (ancestor && (!is<LayoutBlock>(ancestor) || ancestor->is_anonymous()))
+            ancestor = ancestor->containing_block();
+        return to<LayoutBlock>(ancestor);
     }
-    return nullptr;
+
+    if (position == CSS::Position::Fixed)
+        return &root();
+
+    return nearest_block_ancestor();
 }
 
-void LayoutNode::render(RenderingContext& context)
+void LayoutNode::paint(PaintContext& context, PaintPhase phase)
 {
     if (!is_visible())
         return;
 
-    // TODO: render our border
     for_each_child([&](auto& child) {
-        child.render(context);
+        if (child.is_box() && to<LayoutBox>(child).stacking_context())
+            return;
+        child.paint(context, phase);
     });
 }
 
-HitTestResult LayoutNode::hit_test(const Gfx::Point& position) const
+HitTestResult LayoutNode::hit_test(const Gfx::IntPoint& position) const
 {
     HitTestResult result;
     for_each_child([&](auto& child) {
+        // Skip over children that establish their own stacking context.
+        // The outer loop who called us will take care of those.
+        if (is<LayoutBox>(child) && to<LayoutBox>(child).stacking_context())
+            return;
         auto child_result = child.hit_test(position);
         if (child_result.layout_node)
             result = child_result;
@@ -84,19 +117,16 @@ HitTestResult LayoutNode::hit_test(const Gfx::Point& position) const
     return result;
 }
 
-const Document& LayoutNode::document() const
+const Frame& LayoutNode::frame() const
 {
-    if (is_anonymous())
-        return parent()->document();
-    return node()->document();
+    ASSERT(document().frame());
+    return *document().frame();
 }
 
-Document& LayoutNode::document()
+Frame& LayoutNode::frame()
 {
-    if (is_anonymous())
-        return parent()->document();
-    // FIXME: Remove this const_cast once we give up on the idea of a const link from layout tree to DOM tree.
-    return const_cast<Node*>(node())->document();
+    ASSERT(document().frame());
+    return *document().frame();
 }
 
 const LayoutDocument& LayoutNode::root() const
@@ -111,48 +141,117 @@ LayoutDocument& LayoutNode::root()
     return *document().layout_node();
 }
 
-void LayoutNode::split_into_lines(LayoutBlock& container)
+void LayoutNode::split_into_lines(LayoutBlock& container, LayoutMode layout_mode)
 {
     for_each_child([&](auto& child) {
-        if (child.is_inline()) {
-            child.split_into_lines(container);
-        } else {
-            // FIXME: Support block children of inlines.
-        }
+        child.split_into_lines(container, layout_mode);
     });
 }
 
 void LayoutNode::set_needs_display()
 {
-    auto* frame = document().frame();
-    ASSERT(frame);
-
     if (auto* block = containing_block()) {
         block->for_each_fragment([&](auto& fragment) {
             if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
-                const_cast<Frame*>(frame)->set_needs_display(enclosing_int_rect(fragment.rect()));
+                frame().set_needs_display(enclosing_int_rect(fragment.absolute_rect()));
             }
             return IterationDecision::Continue;
         });
     }
 }
 
+float LayoutNode::font_size() const
+{
+    // FIXME: This doesn't work right for relative font-sizes
+    auto length = specified_style().length_or_fallback(CSS::PropertyID::FontSize, Length(10, Length::Type::Px));
+    return length.raw_value();
+}
+
 Gfx::FloatPoint LayoutNode::box_type_agnostic_position() const
 {
     if (is_box())
-        return to<LayoutBox>(*this).position();
+        return to<LayoutBox>(*this).absolute_position();
     ASSERT(is_inline());
     Gfx::FloatPoint position;
     if (auto* block = containing_block()) {
         block->for_each_fragment([&](auto& fragment) {
             if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
-                position = fragment.rect().location();
+                position = fragment.absolute_rect().location();
                 return IterationDecision::Break;
             }
             return IterationDecision::Continue;
         });
     }
     return position;
+}
+
+bool LayoutNode::is_floating() const
+{
+    if (!has_style())
+        return false;
+    return style().float_() != CSS::Float::None;
+}
+
+bool LayoutNode::is_absolutely_positioned() const
+{
+    if (!has_style())
+        return false;
+    auto position = style().position();
+    return position == CSS::Position::Absolute || position == CSS::Position::Fixed;
+}
+
+bool LayoutNode::is_fixed_position() const
+{
+    if (!has_style())
+        return false;
+    auto position = style().position();
+    return position == CSS::Position::Fixed;
+}
+
+LayoutNodeWithStyle::LayoutNodeWithStyle(Document& document, const Node* node, NonnullRefPtr<StyleProperties> specified_style)
+    : LayoutNode(document, node)
+    , m_specified_style(move(specified_style))
+{
+    m_has_style = true;
+    apply_style(*m_specified_style);
+}
+
+void LayoutNodeWithStyle::apply_style(const StyleProperties& specified_style)
+{
+    auto& style = static_cast<MutableLayoutStyle&>(m_style);
+
+    style.set_position(specified_style.position());
+    style.set_text_align(specified_style.text_align());
+
+    auto white_space = specified_style.white_space();
+    if (white_space.has_value())
+        style.set_white_space(white_space.value());
+
+    auto float_ = specified_style.float_();
+    if (float_.has_value())
+        style.set_float(float_.value());
+
+    style.set_z_index(specified_style.z_index());
+    style.set_width(specified_style.length_or_fallback(CSS::PropertyID::Width, {}));
+    style.set_min_width(specified_style.length_or_fallback(CSS::PropertyID::MinWidth, {}));
+    style.set_max_width(specified_style.length_or_fallback(CSS::PropertyID::MaxWidth, {}));
+    style.set_height(specified_style.length_or_fallback(CSS::PropertyID::Height, {}));
+    style.set_min_height(specified_style.length_or_fallback(CSS::PropertyID::MinHeight, {}));
+    style.set_max_height(specified_style.length_or_fallback(CSS::PropertyID::MaxHeight, {}));
+
+    style.set_offset(specified_style.length_box(CSS::PropertyID::Left, CSS::PropertyID::Top, CSS::PropertyID::Right, CSS::PropertyID::Bottom));
+    style.set_margin(specified_style.length_box(CSS::PropertyID::MarginLeft, CSS::PropertyID::MarginTop, CSS::PropertyID::MarginRight, CSS::PropertyID::MarginBottom));
+    style.set_padding(specified_style.length_box(CSS::PropertyID::PaddingLeft, CSS::PropertyID::PaddingTop, CSS::PropertyID::PaddingRight, CSS::PropertyID::PaddingBottom));
+
+    style.border_left().width = specified_style.length_or_fallback(CSS::PropertyID::BorderLeftWidth, {}).resolved_or_zero(*this, 0).to_px(*this);
+    style.border_top().width = specified_style.length_or_fallback(CSS::PropertyID::BorderTopWidth, {}).resolved_or_zero(*this, 0).to_px(*this);
+    style.border_right().width = specified_style.length_or_fallback(CSS::PropertyID::BorderRightWidth, {}).resolved_or_zero(*this, 0).to_px(*this);
+    style.border_bottom().width = specified_style.length_or_fallback(CSS::PropertyID::BorderBottomWidth, {}).resolved_or_zero(*this, 0).to_px(*this);
+
+    style.border_left().color = specified_style.color_or_fallback(CSS::PropertyID::BorderLeftColor, document(), Color::Transparent);
+    style.border_top().color = specified_style.color_or_fallback(CSS::PropertyID::BorderTopColor, document(), Color::Transparent);
+    style.border_right().color = specified_style.color_or_fallback(CSS::PropertyID::BorderRightColor, document(), Color::Transparent);
+    style.border_bottom().color = specified_style.color_or_fallback(CSS::PropertyID::BorderBottomColor, document(), Color::Transparent);
 }
 
 }

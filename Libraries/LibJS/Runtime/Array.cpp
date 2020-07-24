@@ -36,50 +36,52 @@ namespace JS {
 Array* Array::create(GlobalObject& global_object)
 {
     auto& interpreter = global_object.interpreter();
-    return interpreter.heap().allocate<Array>(*global_object.array_prototype());
+    return interpreter.heap().allocate<Array>(global_object, *global_object.array_prototype());
 }
 
 Array::Array(Object& prototype)
-    : Object(&prototype)
+    : Object(prototype)
 {
-    put_native_property("length", length_getter, length_setter, Attribute::Writable);
+    define_native_property("length", length_getter, length_setter, Attribute::Writable);
 }
 
 Array::~Array()
 {
 }
 
-Array* array_from(Interpreter& interpreter)
+Array* Array::typed_this(Interpreter& interpreter, GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return {};
     if (!this_object->is_array()) {
-        interpreter.throw_exception<TypeError>("Not an Array");
+        interpreter.throw_exception<TypeError>(ErrorType::NotAn, "Array");
         return nullptr;
     }
     return static_cast<Array*>(this_object);
 }
 
-Value Array::length_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(Array::length_getter)
 {
-    auto* array = array_from(interpreter);
+    auto* array = typed_this(interpreter, global_object);
     if (!array)
         return {};
-    return Value(array->length());
+    return Value(static_cast<i32>(array->indexed_properties().array_like_size()));
 }
 
-void Array::length_setter(Interpreter& interpreter, Value value)
+JS_DEFINE_NATIVE_SETTER(Array::length_setter)
 {
-    auto* array = array_from(interpreter);
+    auto* array = typed_this(interpreter, global_object);
     if (!array)
         return;
-    auto length = value.to_number();
+    auto length = value.to_number(interpreter);
+    if (interpreter.exception())
+        return;
     if (length.is_nan() || length.is_infinity() || length.as_double() < 0) {
-        interpreter.throw_exception<RangeError>("Invalid array length");
+        interpreter.throw_exception<RangeError>(ErrorType::ArrayInvalidLength);
         return;
     }
-    array->elements().resize(length.as_double());
+    array->indexed_properties().set_array_like_size(length.as_double());
 }
 
 }

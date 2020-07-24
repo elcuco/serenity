@@ -33,32 +33,30 @@ namespace JS {
 Error* Error::create(GlobalObject& global_object, const FlyString& name, const String& message)
 {
     auto& interpreter = global_object.interpreter();
-    return interpreter.heap().allocate<Error>(name, message, *global_object.error_prototype());
+    return interpreter.heap().allocate<Error>(global_object, name, message, *global_object.error_prototype());
 }
 
 Error::Error(const FlyString& name, const String& message, Object& prototype)
-    : Object(&prototype)
+    : Object(prototype)
     , m_name(name)
     , m_message(message)
 {
-    set_prototype(&prototype);
 }
 
 Error::~Error()
 {
 }
 
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName)                              \
-    ClassName* ClassName::create(GlobalObject& global_object, const String& message)                       \
-    {                                                                                                      \
-        return global_object.heap().allocate<ClassName>(message, *global_object.snake_name##_prototype()); \
-    }                                                                                                      \
-    ClassName::ClassName(const String& message, Object& prototype)                                         \
-        : Error(#ClassName, message, prototype)                                                            \
-    {                                                                                                      \
-    }                                                                                                      \
-    ClassName::~ClassName() { }                                                                            \
-    const char* ClassName::class_name() const { return #ClassName; }
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName)                                             \
+    ClassName* ClassName::create(GlobalObject& global_object, const String& message)                                      \
+    {                                                                                                                     \
+        return global_object.heap().allocate<ClassName>(global_object, message, *global_object.snake_name##_prototype()); \
+    }                                                                                                                     \
+    ClassName::ClassName(const String& message, Object& prototype)                                                        \
+        : Error(#ClassName, message, prototype)                                                                           \
+    {                                                                                                                     \
+    }                                                                                                                     \
+    ClassName::~ClassName() { }                                                                                           \
 
 JS_ENUMERATE_ERROR_SUBCLASSES
 #undef __JS_ENUMERATE

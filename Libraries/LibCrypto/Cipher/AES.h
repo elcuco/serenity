@@ -30,6 +30,7 @@
 #include <AK/Vector.h>
 #include <LibCrypto/Cipher/Cipher.h>
 #include <LibCrypto/Cipher/Mode/CBC.h>
+#include <LibCrypto/Cipher/Mode/CTR.h>
 
 namespace Crypto {
 namespace Cipher {
@@ -89,7 +90,7 @@ struct AESCipherKey : public CipherKey {
             expand_decrypt_key(user_key, key_bits);
     }
 
-    virtual ~AESCipherKey() override {}
+    virtual ~AESCipherKey() override { }
 
     size_t rounds() const { return m_rounds; }
     size_t length() const { return m_bits / 8; }
@@ -110,6 +111,7 @@ private:
 class AESCipher final : public Cipher<AESCipherKey, AESCipherBlock> {
 public:
     using CBCMode = CBC<AESCipher>;
+    using CTRMode = CTR<AESCipher>;
 
     constexpr static size_t BlockSizeInBits = BlockType::BlockSizeInBits;
 

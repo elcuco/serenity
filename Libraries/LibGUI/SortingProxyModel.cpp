@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/TemporaryChange.h>
 #include <AK/QuickSort.h>
 #include <LibGUI/AbstractView.h>
 #include <LibGUI/SortingProxyModel.h>
@@ -36,23 +37,34 @@ SortingProxyModel::SortingProxyModel(NonnullRefPtr<Model>&& target)
     : m_target(move(target))
     , m_key_column(-1)
 {
-    m_target->on_update = [this] {
-        resort();
-    };
+    // Since the target model already called Model::did_update we can't
+    // assume we will get another call. So, we need to register for further
+    // updates and just call resort() right away, otherwise requests
+    // to this model won't work because there are no indices to map
+    m_target->register_client(*this);
+    resort();
 }
 
 SortingProxyModel::~SortingProxyModel()
 {
+    m_target->unregister_client(*this);
+}
+
+void SortingProxyModel::on_model_update(unsigned flags)
+{
+    resort(flags);
 }
 
 int SortingProxyModel::row_count(const ModelIndex& index) const
 {
-    return target().row_count(index);
+    auto target_index = map_to_target(index);
+    return target().row_count(target_index);
 }
 
 int SortingProxyModel::column_count(const ModelIndex& index) const
 {
-    return target().column_count(index);
+    auto target_index = map_to_target(index);
+    return target().column_count(target_index);
 }
 
 ModelIndex SortingProxyModel::map_to_target(const ModelIndex& index) const
@@ -64,29 +76,16 @@ ModelIndex SortingProxyModel::map_to_target(const ModelIndex& index) const
     return target().index(m_row_mappings[index.row()], index.column());
 }
 
-String SortingProxyModel::row_name(int index) const
+String SortingProxyModel::column_name(int column) const
 {
-    return target().row_name(index);
-}
-
-String SortingProxyModel::column_name(int index) const
-{
-    return target().column_name(index);
-}
-
-Model::ColumnMetadata SortingProxyModel::column_metadata(int index) const
-{
-    return target().column_metadata(index);
+    return target().column_name(column);
 }
 
 Variant SortingProxyModel::data(const ModelIndex& index, Role role) const
 {
     auto target_index = map_to_target(index);
-    if (!target_index.is_valid()) {
-        dbg() << "BUG! SortingProxyModel: Unable to convert " << index << " to target";
-        return {};
-    }
-    return target().data(map_to_target(index), role);
+    ASSERT(target_index.is_valid());
+    return target().data(target_index, role);
 }
 
 void SortingProxyModel::update()
@@ -110,20 +109,21 @@ void SortingProxyModel::set_key_column_and_sort_order(int column, SortOrder sort
     resort();
 }
 
-void SortingProxyModel::resort()
+void SortingProxyModel::resort(unsigned flags)
 {
+    TemporaryChange change(m_sorting, true);
     auto old_row_mappings = m_row_mappings;
     int row_count = target().row_count();
     m_row_mappings.resize(row_count);
     for (int i = 0; i < row_count; ++i)
         m_row_mappings[i] = i;
     if (m_key_column == -1) {
-        did_update(Model::UpdateFlag::DontInvalidateIndexes);
+        did_update(flags);
         return;
     }
     quick_sort(m_row_mappings, [&](auto row1, auto row2) -> bool {
-        auto data1 = target().data(target().index(row1, m_key_column), Model::Role::Sort);
-        auto data2 = target().data(target().index(row2, m_key_column), Model::Role::Sort);
+        auto data1 = target().data(target().index(row1, m_key_column), m_sort_role);
+        auto data2 = target().data(target().index(row2, m_key_column), m_sort_role);
         if (data1 == data2)
             return 0;
         bool is_less_than;
@@ -133,24 +133,30 @@ void SortingProxyModel::resort()
             is_less_than = data1 < data2;
         return m_sort_order == SortOrder::Ascending ? is_less_than : !is_less_than;
     });
-    did_update(Model::UpdateFlag::DontInvalidateIndexes);
     for_each_view([&](AbstractView& view) {
-        auto& selection = view.selection();
-        Vector<ModelIndex> selected_indexes_in_target;
-        selection.for_each_index([&](const ModelIndex& index) {
-            selected_indexes_in_target.append(target().index(old_row_mappings[index.row()], index.column()));
-        });
+        view.selection().change_from_model({}, [&](ModelSelection& selection) {
+            Vector<ModelIndex> selected_indexes_in_target;
+            selection.for_each_index([&](const ModelIndex& index) {
+                selected_indexes_in_target.append(target().index(old_row_mappings[index.row()], index.column()));
+            });
 
-        selection.clear();
-        for (auto& index : selected_indexes_in_target) {
-            for (size_t i = 0; i < m_row_mappings.size(); ++i) {
-                if (m_row_mappings[i] == index.row()) {
-                    selection.add(this->index(i, index.column()));
-                    continue;
+            selection.clear();
+            for (auto& index : selected_indexes_in_target) {
+                for (size_t i = 0; i < m_row_mappings.size(); ++i) {
+                    if (m_row_mappings[i] == index.row()) {
+                        selection.add(this->index(i, index.column()));
+                        continue;
+                    }
                 }
             }
-        }
+        });
     });
+    did_update(flags);
+}
+
+bool SortingProxyModel::is_column_sortable(int column_index) const
+{
+    return target().is_column_sortable(column_index);
 }
 
 }

@@ -62,16 +62,17 @@ void JsonParser::consume_whitespace()
     consume_while([](char ch) { return is_whitespace(ch); });
 }
 
-void JsonParser::consume_specific(char expected_ch)
+bool JsonParser::consume_specific(char expected_ch)
 {
     char consumed_ch = consume();
-    ASSERT(consumed_ch == expected_ch);
+    return consumed_ch == expected_ch;
 }
 
 String JsonParser::consume_quoted_string()
 {
-    consume_specific('"');
-    Vector<char, 1024> buffer;
+    if (!consume_specific('"'))
+        return {};
+    StringBuilder final_sb;
 
     for (;;) {
         size_t peek_index = m_index;
@@ -86,8 +87,10 @@ String JsonParser::consume_quoted_string()
         }
 
         if (peek_index != m_index) {
-            buffer.append(m_input.characters_without_null_termination() + m_index, peek_index - m_index);
-            m_index = peek_index;
+            while (peek_index != m_index) {
+                final_sb.append(m_input.characters_without_null_termination()[m_index]);
+                m_index++;
+            }
         }
 
         if (m_index == m_input.length())
@@ -95,106 +98,125 @@ String JsonParser::consume_quoted_string()
         if (ch == '"')
             break;
         if (ch != '\\') {
-            buffer.append(consume());
+            final_sb.append(consume());
             continue;
         }
         consume();
         char escaped_ch = consume();
         switch (escaped_ch) {
         case 'n':
-            buffer.append('\n');
+            final_sb.append('\n');
             break;
         case 'r':
-            buffer.append('\r');
+            final_sb.append('\r');
             break;
         case 't':
-            buffer.append('\t');
+            final_sb.append('\t');
             break;
         case 'b':
-            buffer.append('\b');
+            final_sb.append('\b');
             break;
         case 'f':
-            buffer.append('\f');
+            final_sb.append('\f');
             break;
-        case 'u':
-            consume();
-            consume();
-            consume();
-            consume();
-            // FIXME: This is obviously not correct, but we don't have non-ASCII support so meh.
-            buffer.append('?');
-            break;
+        case 'u': {
+            StringBuilder sb;
+            sb.append(consume());
+            sb.append(consume());
+            sb.append(consume());
+            sb.append(consume());
+
+            auto codepoint = AK::StringUtils::convert_to_uint_from_hex(sb.to_string());
+            if (codepoint.has_value()) {
+                final_sb.append_codepoint(codepoint.value());
+            } else {
+                final_sb.append('?');
+            }
+        } break;
         default:
-            buffer.append(escaped_ch);
+            final_sb.append(escaped_ch);
             break;
         }
     }
-    consume_specific('"');
+    if (!consume_specific('"'))
+        return {};
 
-    if (buffer.is_empty())
-        return String::empty();
-
-    auto& last_string_starting_with_character = m_last_string_starting_with_character[(u8)buffer.first()];
-    if (last_string_starting_with_character.length() == buffer.size()) {
-        if (!memcmp(last_string_starting_with_character.characters(), buffer.data(), buffer.size()))
-            return last_string_starting_with_character;
-    }
-
-    last_string_starting_with_character = String::copy(buffer);
-    return last_string_starting_with_character;
+    return final_sb.to_string();
 }
 
-JsonObject JsonParser::parse_object()
+Optional<JsonValue> JsonParser::parse_object()
 {
     JsonObject object;
-    consume_specific('{');
+    if (!consume_specific('{'))
+        return {};
     for (;;) {
         consume_whitespace();
         if (peek() == '}')
             break;
         consume_whitespace();
         auto name = consume_quoted_string();
+        if (name.is_null())
+            return {};
         consume_whitespace();
-        consume_specific(':');
+        if (!consume_specific(':'))
+            return {};
         consume_whitespace();
-        auto value = parse();
-        object.set(name, move(value));
+        auto value = parse_helper();
+        if (!value.has_value())
+            return {};
+        object.set(name, move(value.value()));
         consume_whitespace();
         if (peek() == '}')
             break;
-        consume_specific(',');
+        if (!consume_specific(','))
+            return {};
+        consume_whitespace();
+        if (peek() == '}')
+            return {};
     }
-    consume_specific('}');
+    if (!consume_specific('}'))
+        return {};
     return object;
 }
 
-JsonArray JsonParser::parse_array()
+Optional<JsonValue> JsonParser::parse_array()
 {
     JsonArray array;
-    consume_specific('[');
+    if (!consume_specific('['))
+        return {};
     for (;;) {
         consume_whitespace();
         if (peek() == ']')
             break;
-        array.append(parse());
+        auto element = parse_helper();
+        if (!element.has_value())
+            return {};
+        array.append(element.value());
         consume_whitespace();
         if (peek() == ']')
             break;
-        consume_specific(',');
+        if (!consume_specific(','))
+            return {};
+        consume_whitespace();
+        if (peek() == ']')
+            return {};
     }
     consume_whitespace();
-    consume_specific(']');
+    if (!consume_specific(']'))
+        return {};
     return array;
 }
 
-JsonValue JsonParser::parse_string()
+Optional<JsonValue> JsonParser::parse_string()
 {
-    return consume_quoted_string();
+    auto result = consume_quoted_string();
+    if (result.is_null())
+        return {};
+    return JsonValue(result);
 }
 
-JsonValue JsonParser::parse_number()
+Optional<JsonValue> JsonParser::parse_number()
 {
-    bool ok;
     JsonValue value;
     Vector<char, 128> number_buffer;
     Vector<char, 128> fraction_buffer;
@@ -223,14 +245,20 @@ JsonValue JsonParser::parse_number()
 
 #ifndef KERNEL
     if (is_double) {
-        int whole = number_string.to_uint(ok);
-        if (!ok)
-            whole = number_string.to_int(ok);
-        ASSERT(ok);
+        // FIXME: This logic looks shaky.
+        int whole = 0;
+        auto to_signed_result = number_string.to_uint();
+        if (to_signed_result.has_value()) {
+            whole = to_signed_result.value();
+        } else {
+            auto number = number_string.to_int();
+            if (!number.has_value())
+                return {};
+            whole = number.value();
+        }
 
-        int fraction = fraction_string.to_uint(ok);
+        int fraction = fraction_string.to_uint().value();
         fraction *= (whole < 0) ? -1 : 1;
-        ASSERT(ok);
 
         auto divider = 1;
         for (size_t i = 0; i < fraction_buffer.size(); ++i) {
@@ -239,10 +267,15 @@ JsonValue JsonParser::parse_number()
         value = JsonValue((double)whole + ((double)fraction / divider));
     } else {
 #endif
-        value = JsonValue(number_string.to_uint(ok));
-        if (!ok)
-            value = JsonValue(number_string.to_int(ok));
-        ASSERT(ok);
+        auto to_unsigned_result = number_string.to_uint();
+        if (to_unsigned_result.has_value()) {
+            value = JsonValue(to_unsigned_result.value());
+        } else {
+            auto number = number_string.to_int();
+            if (!number.has_value())
+                return {};
+            value = JsonValue(number.value());
+        }
 #ifndef KERNEL
     }
 #endif
@@ -250,37 +283,37 @@ JsonValue JsonParser::parse_number()
     return value;
 }
 
-void JsonParser::consume_string(const char* str)
+bool JsonParser::consume_string(const char* str)
 {
-    for (size_t i = 0, length = strlen(str); i < length; ++i)
-        consume_specific(str[i]);
+    for (size_t i = 0, length = strlen(str); i < length; ++i) {
+        if (!consume_specific(str[i]))
+            return false;
+    }
+    return true;
 }
 
-JsonValue JsonParser::parse_true()
+Optional<JsonValue> JsonParser::parse_true()
 {
-    consume_string("true");
+    if (!consume_string("true"))
+        return {};
     return JsonValue(true);
 }
 
-JsonValue JsonParser::parse_false()
+Optional<JsonValue> JsonParser::parse_false()
 {
-    consume_string("false");
+    if (!consume_string("false"))
+        return {};
     return JsonValue(false);
 }
 
-JsonValue JsonParser::parse_null()
+Optional<JsonValue> JsonParser::parse_null()
 {
-    consume_string("null");
+    if (!consume_string("null"))
+        return {};
     return JsonValue(JsonValue::Type::Null);
 }
 
-JsonValue JsonParser::parse_undefined()
-{
-    consume_string("undefined");
-    return JsonValue(JsonValue::Type::Undefined);
-}
-
-JsonValue JsonParser::parse()
+Optional<JsonValue> JsonParser::parse_helper()
 {
     consume_whitespace();
     auto type_hint = peek();
@@ -309,10 +342,19 @@ JsonValue JsonParser::parse()
         return parse_true();
     case 'n':
         return parse_null();
-    case 'u':
-        return parse_undefined();
     }
 
-    return JsonValue();
+    return {};
 }
+
+Optional<JsonValue> JsonParser::parse() {
+    auto result = parse_helper();
+    if (!result.has_value())
+        return {};
+    consume_whitespace();
+    if (m_index != m_input.length())
+        return {};
+    return result;
+}
+
 }

@@ -29,8 +29,14 @@
 #include "History.h"
 #include <AK/URL.h>
 #include <LibGUI/Widget.h>
-#include <LibWeb/Forward.h>
 #include <LibHTTP/HttpJob.h>
+#include <LibWeb/Forward.h>
+
+class WebContentView;
+
+namespace Web {
+class WebViewHooks;
+}
 
 namespace Browser {
 
@@ -38,44 +44,71 @@ class Tab final : public GUI::Widget {
     C_OBJECT(Tab);
 
 public:
+    enum class Type {
+        InProcessWebView,
+        OutOfProcessWebView,
+    };
+
     virtual ~Tab() override;
 
-    void load(const URL&);
+    URL url() const;
+
+    enum class LoadType {
+        Normal,
+        HistoryNavigation,
+    };
+
+    void load(const URL&, LoadType = LoadType::Normal);
+    void reload();
+    void go_back();
+    void go_forward();
 
     void did_become_active();
+    void context_menu_requested(const Gfx::IntPoint& screen_position);
 
     Function<void(String)> on_title_change;
-    Function<void(URL&)> on_tab_open_request;
+    Function<void(const URL&)> on_tab_open_request;
     Function<void(Tab&)> on_tab_close_request;
     Function<void(const Gfx::Bitmap&)> on_favicon_change;
 
     const String& title() const { return m_title; }
     const Gfx::Bitmap* icon() const { return m_icon; }
 
-private:
-    Tab();
+    GUI::Widget& view();
 
+private:
+    explicit Tab(Type);
+
+    Web::WebViewHooks& hooks();
     void update_actions();
     void update_bookmark_button(const String& url);
 
-    History<URL> m_history;
-    RefPtr<Web::HtmlView> m_html_widget;
+    Type m_type;
+
+    History m_history;
+
+    RefPtr<Web::PageView> m_page_view;
+    RefPtr<WebContentView> m_web_content_view;
+
     RefPtr<GUI::Action> m_go_back_action;
     RefPtr<GUI::Action> m_go_forward_action;
+    RefPtr<GUI::Action> m_reload_action;
     RefPtr<GUI::TextBox> m_location_box;
     RefPtr<GUI::Button> m_bookmark_button;
     RefPtr<GUI::Window> m_dom_inspector_window;
+    RefPtr<GUI::Window> m_console_window;
     RefPtr<GUI::StatusBar> m_statusbar;
     RefPtr<GUI::MenuBar> m_menubar;
     RefPtr<GUI::ToolBarContainer> m_toolbar_container;
 
     RefPtr<GUI::Menu> m_link_context_menu;
-    String m_link_context_menu_href;
+    URL m_link_context_menu_url;
+
+    RefPtr<GUI::Menu> m_tab_context_menu;
+    RefPtr<GUI::Menu> m_page_context_menu;
 
     String m_title;
     RefPtr<const Gfx::Bitmap> m_icon;
-
-    bool m_should_push_loads_to_history { true };
 };
 
 }

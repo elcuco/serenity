@@ -25,6 +25,7 @@
  */
 
 #include "TextEditorWidget.h"
+#include <LibCore/ArgsParser.h>
 #include <LibGfx/Bitmap.h>
 #include <stdio.h>
 
@@ -35,12 +36,22 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio thread rpath accept cpath wpath shared_buffer unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
+
+    const char* preview_mode = "auto";
+    const char* file_to_edit = nullptr;
+    Core::ArgsParser parser;
+    parser.add_option(preview_mode, "Preview mode, one of 'none', 'html', 'markdown', 'auto'", "preview-mode", '\0', "mode");
+    parser.add_positional_argument(file_to_edit, "File to edit", "file", Core::ArgsParser::Required::No);
+
+    parser.parse(argc, argv);
+
+    StringView preview_mode_view = preview_mode;
 
     auto window = GUI::Window::construct();
     window->set_title("Text Editor");
@@ -56,11 +67,24 @@ int main(int argc, char** argv)
         return GUI::Window::CloseRequestDecision::StayOpen;
     };
 
-    if (argc >= 2)
-        text_widget.open_sesame(argv[1]);
+    if (preview_mode_view == "auto") {
+        text_widget.set_auto_detect_preview_mode(true);
+    } else if (preview_mode_view == "markdown") {
+        text_widget.set_preview_mode(TextEditorWidget::PreviewMode::Markdown);
+    } else if (preview_mode_view == "html") {
+        text_widget.set_preview_mode(TextEditorWidget::PreviewMode::HTML);
+    } else if (preview_mode_view == "none") {
+        text_widget.set_preview_mode(TextEditorWidget::PreviewMode::None);
+    } else {
+        fprintf(stderr, "Invalid mode '%s'\n", preview_mode);
+        return 1;
+    }
+
+    if (file_to_edit)
+        text_widget.open_sesame(file_to_edit);
 
     window->show();
-    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/TextEditor16.png"));
+    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-text-editor.png"));
 
-    return app.exec();
+    return app->exec();
 }

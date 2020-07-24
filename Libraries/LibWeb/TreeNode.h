@@ -109,7 +109,8 @@ public:
     bool is_ancestor_of(const TreeNode&) const;
 
     void prepend_child(NonnullRefPtr<T> node);
-    void append_child(NonnullRefPtr<T> node);
+    void append_child(NonnullRefPtr<T> node, bool notify = true);
+    void insert_before(NonnullRefPtr<T> node, RefPtr<T> child, bool notify = true);
     NonnullRefPtr<T> remove_child(NonnullRefPtr<T> node);
     void donate_all_children_to(T& node);
 
@@ -133,6 +134,17 @@ public:
     const T* next_in_pre_order() const
     {
         return const_cast<TreeNode*>(this)->next_in_pre_order();
+    }
+
+    bool is_before(const T& other) const
+    {
+        if (this == &other)
+            return false;
+        for (auto* node = this; node; node = node->next_in_pre_order()) {
+            if (node == &other)
+                return true;
+        }
+        return false;
     }
 
     template<typename Callback>
@@ -188,7 +200,7 @@ public:
     }
 
 protected:
-    TreeNode() {}
+    TreeNode() { }
 
 private:
     int m_ref_count { 1 };
@@ -230,7 +242,7 @@ inline NonnullRefPtr<T> TreeNode<T>::remove_child(NonnullRefPtr<T> node)
 }
 
 template<typename T>
-inline void TreeNode<T>::append_child(NonnullRefPtr<T> node)
+inline void TreeNode<T>::append_child(NonnullRefPtr<T> node, bool notify)
 {
     ASSERT(!node->m_parent);
 
@@ -244,10 +256,39 @@ inline void TreeNode<T>::append_child(NonnullRefPtr<T> node)
     m_last_child = node.ptr();
     if (!m_first_child)
         m_first_child = m_last_child;
-    node->inserted_into(static_cast<T&>(*this));
+    if (notify)
+        node->inserted_into(static_cast<T&>(*this));
     (void)node.leak_ref();
 
-    static_cast<T*>(this)->children_changed();
+    if (notify)
+        static_cast<T*>(this)->children_changed();
+}
+
+template<typename T>
+inline void TreeNode<T>::insert_before(NonnullRefPtr<T> node, RefPtr<T> child, bool notify)
+{
+    if (!child)
+        return append_child(move(node), notify);
+
+    ASSERT(!node->m_parent);
+    ASSERT(child->parent() == this);
+
+    if (!static_cast<T*>(this)->is_child_allowed(*node))
+        return;
+
+    node->m_previous_sibling = child->m_previous_sibling;
+    node->m_next_sibling = child;
+
+    if (m_first_child == child)
+        m_first_child = node;
+
+    node->m_parent = static_cast<T*>(this);
+    if (notify)
+        node->inserted_into(static_cast<T&>(*this));
+    (void)node.leak_ref();
+
+    if (notify)
+        static_cast<T*>(this)->children_changed();
 }
 
 template<typename T>

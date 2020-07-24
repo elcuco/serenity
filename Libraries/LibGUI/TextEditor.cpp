@@ -26,7 +26,6 @@
 
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
-#include <Kernel/KeyCode.h>
 #include <LibCore/Timer.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Clipboard.h>
@@ -53,12 +52,13 @@ namespace GUI {
 TextEditor::TextEditor(Type type)
     : m_type(type)
 {
+    set_accepts_emoji_input(true);
     set_background_role(ColorRole::Base);
     set_foreground_role(ColorRole::BaseText);
     set_document(TextDocument::create());
     set_scrollbars_enabled(is_multi_line());
-    set_font(FontDatabase::the().get_by_name("Csilla Thin"));
-    // FIXME: Recompute vertical scrollbar step size on font change.
+    if (is_multi_line())
+        set_font(Gfx::Font::default_fixed_width_font());
     vertical_scrollbar().set_step(line_height());
     m_cursor = { 0, 0 };
     m_automatic_selection_scroll_timer = add<Core::Timer>(100, [this] {
@@ -87,26 +87,20 @@ void TextEditor::create_actions()
     if (is_multi_line()) {
         m_go_to_line_action = Action::create(
             "Go to line...", { Mod_Ctrl, Key_L }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-forward.png"), [this](auto&) {
-                auto input_box = InputBox::construct("Line:", "Go to line", window());
-                auto result = input_box->exec();
-                if (result == InputBox::ExecOK) {
-                    bool ok;
-                    auto line_number = input_box->text_value().to_uint(ok);
-                    if (ok)
-                        set_cursor(line_number - 1, 0);
+                String value;
+                if (InputBox::show(value, window(), "Line:", "Go to line") == InputBox::ExecOK) {
+                    auto line_number = value.to_uint();
+                    if (line_number.has_value())
+                        set_cursor(line_number.value() - 1, 0);
                 }
             },
             this);
     }
-    m_select_all_action = Action::create(
-        "Select all", { Mod_Ctrl, Key_A }, Gfx::Bitmap::load_from_file("/res/icons/16x16/select-all.png"), [this](auto&) { select_all(); }, this);
+    m_select_all_action = CommonActions::make_select_all_action([this](auto&) { select_all(); }, this);
 }
 
 void TextEditor::set_text(const StringView& text)
 {
-    if (is_single_line() && text.length() == line(0).length() && !memcmp(text.characters_without_null_termination(), line(0).characters(), text.length()))
-        return;
-
     m_selection.clear();
 
     document().set_text(text);
@@ -137,12 +131,15 @@ void TextEditor::update_content_size()
     set_size_occupied_by_fixed_elements({ ruler_width(), 0 });
 }
 
-TextPosition TextEditor::text_position_at(const Gfx::Point& a_position) const
+TextPosition TextEditor::text_position_at(const Gfx::IntPoint& a_position) const
 {
     auto position = a_position;
     position.move_by(horizontal_scrollbar().value(), vertical_scrollbar().value());
     position.move_by(-(m_horizontal_content_padding + ruler_width()), 0);
     position.move_by(-frame_thickness(), -frame_thickness());
+
+    if (is_single_line() && icon())
+        position.move_by(-(icon_size() + icon_padding()), 0);
 
     size_t line_index = 0;
 
@@ -162,27 +159,33 @@ TextPosition TextEditor::text_position_at(const Gfx::Point& a_position) const
 
     line_index = max((size_t)0, min(line_index, line_count() - 1));
 
-    size_t column_index;
+    size_t column_index = 0;
     switch (m_text_alignment) {
     case Gfx::TextAlignment::CenterLeft:
-        if (position.x() <= 0)
-            column_index = 0;
-        else
-            column_index = (position.x() + glyph_width() / 2) / glyph_width();
-        if (is_line_wrapping_enabled()) {
-            for_each_visual_line(line_index, [&](const Gfx::Rect& rect, const StringView&, size_t start_of_line) {
-                if (rect.contains_vertically(position.y())) {
-                    column_index += start_of_line;
-                    return IterationDecision::Break;
-                }
+        for_each_visual_line(line_index, [&](const Gfx::IntRect& rect, auto& view, size_t start_of_line) {
+            if (is_multi_line() && !rect.contains_vertically(position.y()))
                 return IterationDecision::Continue;
-            });
-        }
+            column_index = start_of_line;
+            if (position.x() <= 0) {
+                // We're outside the text on the left side, put cursor at column 0 on this visual line.
+            } else {
+                int glyph_x = 0;
+                size_t i = 0;
+                for (; i < view.length(); ++i) {
+                    int advance = font().glyph_width(view.codepoints()[i]) + font().glyph_spacing();
+                    if ((glyph_x + (advance / 2)) >= position.x())
+                        break;
+                    glyph_x += advance;
+                }
+                column_index += i;
+            }
+            return IterationDecision::Break;
+        });
         break;
     case Gfx::TextAlignment::CenterRight:
         // FIXME: Support right-aligned line wrapping, I guess.
         ASSERT(!is_line_wrapping_enabled());
-        column_index = (position.x() - content_x_for_position({ line_index, 0 }) + glyph_width() / 2) / glyph_width();
+        column_index = (position.x() - content_x_for_position({ line_index, 0 }) + fixed_glyph_width() / 2) / fixed_glyph_width();
         break;
     default:
         ASSERT_NOT_REACHED();
@@ -197,6 +200,9 @@ void TextEditor::doubleclick_event(MouseEvent& event)
     if (event.button() != MouseButton::Left)
         return;
 
+    if (is_displayonly())
+        return;
+
     // NOTE: This ensures that spans are updated before we look at them.
     flush_pending_change_notification_if_needed();
 
@@ -205,20 +211,10 @@ void TextEditor::doubleclick_event(MouseEvent& event)
 
     auto start = text_position_at(event.position());
     auto end = start;
-    auto& line = this->line(start.line());
 
     if (!document().has_spans()) {
-        while (start.column() > 0) {
-            if (isspace(line.characters()[start.column() - 1]))
-                break;
-            start.set_column(start.column() - 1);
-        }
-
-        while (end.column() < line.length()) {
-            if (isspace(line.characters()[end.column()]))
-                break;
-            end.set_column(end.column() + 1);
-        }
+        start = document().first_word_break_before(start, false);
+        end = document().first_word_break_after(end);
     } else {
         for (auto& span : document().spans()) {
             if (!span.range.contains(start))
@@ -241,6 +237,12 @@ void TextEditor::mousedown_event(MouseEvent& event)
     if (event.button() != MouseButton::Left) {
         return;
     }
+
+    if (on_mousedown)
+        on_mousedown();
+
+    if (is_displayonly())
+        return;
 
     if (m_triple_click_timer.is_valid() && m_triple_click_timer.elapsed() < 250) {
         m_triple_click_timer = Core::ElapsedTimer();
@@ -330,7 +332,7 @@ int TextEditor::ruler_width() const
     return 5 * font().glyph_width('x') + 4;
 }
 
-Gfx::Rect TextEditor::ruler_content_rect(size_t line_index) const
+Gfx::IntRect TextEditor::ruler_content_rect(size_t line_index) const
 {
     if (!m_ruler_visible)
         return {};
@@ -342,12 +344,12 @@ Gfx::Rect TextEditor::ruler_content_rect(size_t line_index) const
     };
 }
 
-Gfx::Rect TextEditor::ruler_rect_in_inner_coordinates() const
+Gfx::IntRect TextEditor::ruler_rect_in_inner_coordinates() const
 {
     return { 0, 0, ruler_width(), height() - height_occupied_by_horizontal_scrollbar() };
 }
 
-Gfx::Rect TextEditor::visible_text_rect_in_inner_coordinates() const
+Gfx::IntRect TextEditor::visible_text_rect_in_inner_coordinates() const
 {
     return {
         m_horizontal_content_padding + (m_ruler_visible ? (ruler_rect_in_inner_coordinates().right() + 1) : 0),
@@ -369,6 +371,19 @@ void TextEditor::paint_event(PaintEvent& event)
     painter.add_clip_rect(widget_inner_rect());
     painter.add_clip_rect(event.rect());
     painter.fill_rect(event.rect(), widget_background_color);
+
+    if (is_displayonly() && (is_focused() || has_visible_list())) {
+        widget_background_color = palette().selection();
+        Gfx::IntRect display_rect {
+            widget_inner_rect().x() + 1,
+            widget_inner_rect().y() + 1,
+            widget_inner_rect().width() - button_padding(),
+            widget_inner_rect().height() - 2
+        };
+        painter.add_clip_rect(display_rect);
+        painter.add_clip_rect(event.rect());
+        painter.fill_rect(event.rect(), widget_background_color);
+    }
 
     painter.translate(frame_thickness(), frame_thickness());
 
@@ -402,12 +417,15 @@ void TextEditor::paint_event(PaintEvent& event)
         }
     }
 
-    Gfx::Rect text_clip_rect {
+    Gfx::IntRect text_clip_rect {
         (m_ruler_visible ? (ruler_rect_in_inner_coordinates().right() + frame_thickness() + 1) : frame_thickness()),
         frame_thickness(),
         width() - width_occupied_by_vertical_scrollbar() - ruler_width(),
         height() - height_occupied_by_horizontal_scrollbar()
     };
+    if (m_ruler_visible)
+        text_clip_rect.move_by(-ruler_width(), 0);
+    text_clip_rect.move_by(horizontal_scrollbar().value(), vertical_scrollbar().value());
     painter.add_clip_rect(text_clip_rect);
 
     for (size_t line_index = first_visible_line; line_index <= last_visible_line; ++line_index) {
@@ -432,7 +450,7 @@ void TextEditor::paint_event(PaintEvent& event)
         size_t selection_end_column_within_line = selection.end().line() == line_index ? selection.end().column() : line.length();
 
         size_t visual_line_index = 0;
-        for_each_visual_line(line_index, [&](const Gfx::Rect& visual_line_rect, const StringView& visual_line_text, size_t start_of_visual_line) {
+        for_each_visual_line(line_index, [&](const Gfx::IntRect& visual_line_rect, auto& visual_line_text, size_t start_of_visual_line) {
             if (is_multi_line() && line_index == m_cursor.line())
                 painter.fill_rect(visual_line_rect, widget_background_color.darkened(0.9f));
 #ifdef DEBUG_TEXTEDITOR
@@ -441,11 +459,13 @@ void TextEditor::paint_event(PaintEvent& event)
             if (!document().has_spans()) {
                 // Fast-path for plain text
                 auto color = palette().color(is_enabled() ? foreground_role() : Gfx::ColorRole::DisabledText);
+                if (is_displayonly() && (is_focused() || has_visible_list()))
+                    color = palette().color(is_enabled() ? Gfx::ColorRole::SelectionText : Gfx::ColorRole::DisabledText);
                 painter.draw_text(visual_line_rect, visual_line_text, m_text_alignment, color);
             } else {
-                int advance = font().glyph_width(' ') + font().glyph_spacing();
-                Gfx::Rect character_rect = { visual_line_rect.location(), { font().glyph_width(' '), line_height() } };
+                Gfx::IntRect character_rect = { visual_line_rect.location(), { 0, line_height() } };
                 for (size_t i = 0; i < visual_line_text.length(); ++i) {
+                    u32 codepoint = visual_line_text.substring_view(i, 1).codepoints()[0];
                     const Gfx::Font* font = &this->font();
                     Color color;
                     Optional<Color> background_color;
@@ -462,16 +482,17 @@ void TextEditor::paint_event(PaintEvent& event)
                         underline = span.is_underlined;
                         break;
                     }
+                    character_rect.set_width(font->glyph_width(codepoint) + font->glyph_spacing());
                     if (background_color.has_value())
                         painter.fill_rect(character_rect, background_color.value());
                     painter.draw_text(character_rect, visual_line_text.substring_view(i, 1), *font, m_text_alignment, color);
                     if (underline) {
                         painter.draw_line(character_rect.bottom_left().translated(0, 1), character_rect.bottom_right().translated(0, 1), color);
                     }
-                    character_rect.move_by(advance, 0);
+                    character_rect.move_by(character_rect.width(), 0);
                 }
             }
-            bool physical_line_has_selection = has_selection && line_index >= selection.start().line() && line_index <= selection.end().line();
+
             if (physical_line_has_selection) {
                 size_t start_of_selection_within_visual_line = (size_t)max(0, (int)selection_start_column_within_line - (int)start_of_visual_line);
                 size_t end_of_selection_within_visual_line = selection_end_column_within_line - start_of_visual_line;
@@ -491,7 +512,7 @@ void TextEditor::paint_event(PaintEvent& event)
                         ? content_x_for_position({ line_index, (size_t)selection_end_column_within_line })
                         : visual_line_rect.right() + 1;
 
-                    Gfx::Rect selection_rect {
+                    Gfx::IntRect selection_rect {
                         selection_left,
                         visual_line_rect.y(),
                         selection_right - selection_left,
@@ -503,12 +524,14 @@ void TextEditor::paint_event(PaintEvent& event)
 
                     painter.fill_rect(selection_rect, background_color);
 
-                    StringView visual_selected_text {
-                        visual_line_text.characters_without_null_termination() + start_of_selection_within_visual_line,
-                        end_of_selection_within_visual_line - start_of_selection_within_visual_line
-                    };
+                    if (visual_line_text.codepoints()) {
+                        Utf32View visual_selected_text {
+                            visual_line_text.codepoints() + start_of_selection_within_visual_line,
+                            end_of_selection_within_visual_line - start_of_selection_within_visual_line
+                        };
 
-                    painter.draw_text(selection_rect, visual_selected_text, Gfx::TextAlignment::CenterLeft, text_color);
+                        painter.draw_text(selection_rect, visual_selected_text, Gfx::TextAlignment::CenterLeft, text_color);
+                    }
                 }
             }
             ++visual_line_index;
@@ -516,7 +539,12 @@ void TextEditor::paint_event(PaintEvent& event)
         });
     }
 
-    if (is_focused() && m_cursor_state)
+    if (!is_multi_line() && m_icon) {
+        Gfx::IntRect icon_rect { icon_padding(), 1, icon_size(), icon_size() };
+        painter.draw_scaled_bitmap(icon_rect, *m_icon, m_icon->rect());
+    }
+
+    if (is_focused() && m_cursor_state && !is_displayonly())
         painter.fill_rect(cursor_content_rect(), palette().text_cursor());
 }
 
@@ -540,9 +568,9 @@ void TextEditor::select_all()
 {
     TextPosition start_of_document { 0, 0 };
     TextPosition end_of_document { line_count() - 1, line(line_count() - 1).length() };
-    m_selection.set(start_of_document, end_of_document);
+    m_selection.set(end_of_document, start_of_document);
     did_update_selection();
-    set_cursor(end_of_document);
+    set_cursor(start_of_document);
     update();
 }
 
@@ -605,9 +633,18 @@ void TextEditor::move_selected_lines_down()
     update();
 }
 
+int strcmp_utf32(const u32* s1, const u32* s2, size_t n)
+{
+    while (n-- > 0) {
+        if (*s1++ != *s2++)
+            return s1[-1] < s2[-1] ? -1 : 1;
+    }
+    return 0;
+}
+
 void TextEditor::sort_selected_lines()
 {
-    if (is_readonly())
+    if (!is_editable())
         return;
 
     if (!has_selection())
@@ -623,7 +660,7 @@ void TextEditor::sort_selected_lines()
     auto end = lines.begin() + (int)last_line + 1;
 
     quick_sort(start, end, [](auto& a, auto& b) {
-        return strcmp(a.characters(), b.characters()) < 0;
+        return strcmp_utf32(a.codepoints(), b.codepoints(), min(a.length(), b.length())) < 0;
     });
 
     did_change();
@@ -662,6 +699,10 @@ void TextEditor::keydown_event(KeyEvent& event)
             }
         }
         return;
+    } else if (event.key() == KeyCode::Key_Up) {
+        if (on_up_pressed)
+            on_up_pressed();
+        return;
     }
     if (is_multi_line() && event.key() == KeyCode::Key_Down) {
         if (m_cursor.line() < (line_count() - 1)) {
@@ -679,6 +720,10 @@ void TextEditor::keydown_event(KeyEvent& event)
             }
         }
         return;
+    } else if (event.key() == KeyCode::Key_Down) {
+        if (on_down_pressed)
+            on_down_pressed();
+        return;
     }
     if (is_multi_line() && event.key() == KeyCode::Key_PageUp) {
         if (m_cursor.line() > 0) {
@@ -693,6 +738,10 @@ void TextEditor::keydown_event(KeyEvent& event)
             }
         }
         return;
+    } else if (event.key() == KeyCode::Key_PageUp) {
+        if (on_pageup_pressed)
+            on_pageup_pressed();
+        return;
     }
     if (is_multi_line() && event.key() == KeyCode::Key_PageDown) {
         if (m_cursor.line() < (line_count() - 1)) {
@@ -706,14 +755,25 @@ void TextEditor::keydown_event(KeyEvent& event)
             }
         }
         return;
+    } else if (event.key() == KeyCode::Key_PageDown) {
+        if (on_pagedown_pressed)
+            on_pagedown_pressed();
+        return;
     }
     if (event.key() == KeyCode::Key_Left) {
-        if (event.ctrl() && document().has_spans()) {
-            // FIXME: Do something nice when the document has no spans.
-            auto span = document().first_non_skippable_span_before(m_cursor);
-            TextPosition new_cursor = !span.has_value()
-                ? TextPosition(0, 0)
-                : span.value().range.start();
+        if (event.ctrl()) {
+            TextPosition new_cursor;
+            if (document().has_spans()) {
+                auto span = document().first_non_skippable_span_before(m_cursor);
+                if (span.has_value()) {
+                    new_cursor = span.value().range.start();
+                } else {
+                    // No remaining spans, just use word break calculation
+                    new_cursor = document().first_word_break_before(m_cursor, true);
+                }
+            } else {
+                new_cursor = document().first_word_break_before(m_cursor, true);
+            }
             toggle_selection_if_needed_for_event(event);
             set_cursor(new_cursor);
             if (event.shift() && m_selection.start().is_valid()) {
@@ -743,12 +803,19 @@ void TextEditor::keydown_event(KeyEvent& event)
         return;
     }
     if (event.key() == KeyCode::Key_Right) {
-        if (event.ctrl() && document().has_spans()) {
-            // FIXME: Do something nice when the document has no spans.
-            auto span = document().first_non_skippable_span_after(m_cursor);
-            TextPosition new_cursor = !span.has_value()
-                ? document().spans().last().range.end()
-                : span.value().range.start();
+        if (event.ctrl()) {
+            TextPosition new_cursor;
+            if (document().has_spans()) {
+                auto span = document().first_non_skippable_span_after(m_cursor);
+                if (span.has_value()) {
+                    new_cursor = span.value().range.start();
+                } else {
+                    // No remaining spans, just use word break calculation
+                    new_cursor = document().first_word_break_after(m_cursor);
+                }
+            } else {
+                new_cursor = document().first_word_break_after(m_cursor);
+            }
             toggle_selection_if_needed_for_event(event);
             set_cursor(new_cursor);
             if (event.shift() && m_selection.start().is_valid()) {
@@ -819,7 +886,7 @@ void TextEditor::keydown_event(KeyEvent& event)
         return;
     }
     if (event.key() == KeyCode::Key_Backspace) {
-        if (is_readonly())
+        if (!is_editable())
             return;
         if (has_selection()) {
             delete_selection();
@@ -828,7 +895,10 @@ void TextEditor::keydown_event(KeyEvent& event)
         }
         if (m_cursor.column() > 0) {
             int erase_count = 1;
-            if (current_line().first_non_whitespace_column() >= m_cursor.column()) {
+            if (event.modifiers() == Mod_Ctrl) {
+                auto word_break_pos = document().first_word_break_before(m_cursor, true);
+                erase_count = m_cursor.column() - word_break_pos.column();
+            } else if (current_line().first_non_whitespace_column() >= m_cursor.column()) {
                 int new_column;
                 if (m_cursor.column() % m_soft_tab_width == 0)
                     new_column = m_cursor.column() - m_soft_tab_width;
@@ -854,21 +924,24 @@ void TextEditor::keydown_event(KeyEvent& event)
     }
 
     if (event.modifiers() == Mod_Shift && event.key() == KeyCode::Key_Delete) {
-        if (is_readonly())
+        if (!is_editable())
             return;
         delete_current_line();
         return;
     }
 
     if (event.key() == KeyCode::Key_Delete) {
-        if (is_readonly())
+        if (!is_editable())
             return;
         do_delete();
         return;
     }
 
-    if (!is_readonly() && !event.ctrl() && !event.alt() && !event.text().is_empty()) {
-        insert_at_cursor_or_replace_selection(event.text());
+    if (is_editable() && !event.ctrl() && !event.alt() && event.code_point() != 0) {
+        StringBuilder sb;
+        sb.append_codepoint(event.code_point());
+
+        insert_at_cursor_or_replace_selection(sb.to_string());
         return;
     }
 
@@ -899,7 +972,7 @@ void TextEditor::delete_current_line()
 
 void TextEditor::do_delete()
 {
-    if (is_readonly())
+    if (!is_editable())
         return;
 
     if (has_selection())
@@ -922,27 +995,33 @@ void TextEditor::do_delete()
 int TextEditor::content_x_for_position(const TextPosition& position) const
 {
     auto& line = this->line(position.line());
-    int x_offset = -1;
+    int x_offset = 0;
     switch (m_text_alignment) {
     case Gfx::TextAlignment::CenterLeft:
-        for_each_visual_line(position.line(), [&](const Gfx::Rect&, const StringView& view, size_t start_of_visual_line) {
-            if (position.column() >= start_of_visual_line && ((position.column() - start_of_visual_line) <= view.length())) {
-                x_offset = (position.column() - start_of_visual_line) * glyph_width();
+        for_each_visual_line(position.line(), [&](const Gfx::IntRect&, auto& visual_line_view, size_t start_of_visual_line) {
+            size_t offset_in_visual_line = position.column() - start_of_visual_line;
+            if (position.column() >= start_of_visual_line && (offset_in_visual_line <= visual_line_view.length())) {
+                if (offset_in_visual_line == 0) {
+                    x_offset = 0;
+                } else {
+                    x_offset = font().width(visual_line_view.substring_view(0, offset_in_visual_line));
+                    x_offset += font().glyph_spacing();
+                }
                 return IterationDecision::Break;
             }
             return IterationDecision::Continue;
         });
-        return m_horizontal_content_padding + x_offset;
+        return m_horizontal_content_padding + ((is_single_line() && icon()) ? (icon_size() + icon_padding()) : 0) + x_offset;
     case Gfx::TextAlignment::CenterRight:
         // FIXME
         ASSERT(!is_line_wrapping_enabled());
-        return content_width() - m_horizontal_content_padding - (line.length() * glyph_width()) + (position.column() * glyph_width());
+        return content_width() - m_horizontal_content_padding - (line.length() * fixed_glyph_width()) + (position.column() * fixed_glyph_width());
     default:
         ASSERT_NOT_REACHED();
     }
 }
 
-Gfx::Rect TextEditor::content_rect_for_position(const TextPosition& position) const
+Gfx::IntRect TextEditor::content_rect_for_position(const TextPosition& position) const
 {
     if (!position.is_valid())
         return {};
@@ -952,13 +1031,13 @@ Gfx::Rect TextEditor::content_rect_for_position(const TextPosition& position) co
     int x = content_x_for_position(position);
 
     if (is_single_line()) {
-        Gfx::Rect rect { x, 0, 1, font().glyph_height() + 2 };
+        Gfx::IntRect rect { x, 0, 1, font().glyph_height() + 2 };
         rect.center_vertically_within({ {}, frame_inner_rect().size() });
         return rect;
     }
 
-    Gfx::Rect rect;
-    for_each_visual_line(position.line(), [&](const Gfx::Rect& visual_line_rect, const StringView& view, size_t start_of_visual_line) {
+    Gfx::IntRect rect;
+    for_each_visual_line(position.line(), [&](const Gfx::IntRect& visual_line_rect, auto& view, size_t start_of_visual_line) {
         if (position.column() >= start_of_visual_line && ((position.column() - start_of_visual_line) <= view.length())) {
             // NOTE: We have to subtract the horizontal padding here since it's part of the visual line rect
             //       *and* included in what we get from content_x_for_position().
@@ -975,12 +1054,12 @@ Gfx::Rect TextEditor::content_rect_for_position(const TextPosition& position) co
     return rect;
 }
 
-Gfx::Rect TextEditor::cursor_content_rect() const
+Gfx::IntRect TextEditor::cursor_content_rect() const
 {
     return content_rect_for_position(m_cursor);
 }
 
-Gfx::Rect TextEditor::line_widget_rect(size_t line_index) const
+Gfx::IntRect TextEditor::line_widget_rect(size_t line_index) const
 {
     auto rect = line_content_rect(line_index);
     rect.set_x(frame_thickness());
@@ -1003,14 +1082,15 @@ void TextEditor::scroll_position_into_view(const TextPosition& position)
 
 void TextEditor::scroll_cursor_into_view()
 {
-    scroll_position_into_view(m_cursor);
+    if (!m_reflow_deferred)
+        scroll_position_into_view(m_cursor);
 }
 
-Gfx::Rect TextEditor::line_content_rect(size_t line_index) const
+Gfx::IntRect TextEditor::line_content_rect(size_t line_index) const
 {
     auto& line = this->line(line_index);
     if (is_single_line()) {
-        Gfx::Rect line_rect = { content_x_for_position({ line_index, 0 }), 0, (int)line.length() * glyph_width(), font().glyph_height() + 2 };
+        Gfx::IntRect line_rect = { content_x_for_position({ line_index, 0 }), 0, font().width(line.view()), font().glyph_height() + 4 };
         line_rect.center_vertically_within({ {}, frame_inner_rect().size() });
         return line_rect;
     }
@@ -1019,7 +1099,7 @@ Gfx::Rect TextEditor::line_content_rect(size_t line_index) const
     return {
         content_x_for_position({ line_index, 0 }),
         (int)line_index * line_height(),
-        (int)line.length() * glyph_width(),
+        font().width(line.view()),
         line_height()
     };
 }
@@ -1046,7 +1126,7 @@ void TextEditor::set_cursor(const TextPosition& a_position)
     if (position.column() > lines()[position.line()].length())
         position.set_column(lines()[position.line()].length());
 
-    if (m_cursor != position) {
+    if (m_cursor != position && is_visual_data_up_to_date()) {
         // NOTE: If the old cursor is no longer valid, repaint everything just in case.
         auto old_cursor_line_rect = m_cursor.line() < line_count()
             ? line_widget_rect(m_cursor.line())
@@ -1056,6 +1136,9 @@ void TextEditor::set_cursor(const TextPosition& a_position)
         scroll_cursor_into_view();
         update(old_cursor_line_rect);
         update_cursor();
+    } else if (m_cursor != position) {
+        m_cursor = position;
+        m_cursor_state = true;
     }
     cursor_did_change();
     if (on_cursor_change)
@@ -1066,6 +1149,7 @@ void TextEditor::set_cursor(const TextPosition& a_position)
 
 void TextEditor::focusin_event(Core::Event&)
 {
+    m_cursor_state = true;
     update_cursor();
     start_timer(500);
 }
@@ -1106,7 +1190,8 @@ bool TextEditor::write_to_file(const StringView& path)
     for (size_t i = 0; i < line_count(); ++i) {
         auto& line = this->line(i);
         if (line.length()) {
-            ssize_t nwritten = write(fd, line.characters(), line.length());
+            auto line_as_utf8 = line.to_utf8();
+            ssize_t nwritten = write(fd, line_as_utf8.characters(), line_as_utf8.length());
             if (nwritten < 0) {
                 perror("write");
                 close(fd);
@@ -1133,7 +1218,7 @@ String TextEditor::text() const
     StringBuilder builder;
     for (size_t i = 0; i < line_count(); ++i) {
         auto& line = this->line(i);
-        builder.append(line.characters(), line.length());
+        builder.append(line.view());
         if (i != line_count() - 1)
             builder.append('\n');
     }
@@ -1171,7 +1256,8 @@ void TextEditor::delete_selection()
 
 void TextEditor::insert_at_cursor_or_replace_selection(const StringView& text)
 {
-    ASSERT(!is_readonly());
+    ReflowDeferrer defer(*this);
+    ASSERT(is_editable());
     if (has_selection())
         delete_selection();
     execute<InsertTextCommand>(text, m_cursor);
@@ -1179,7 +1265,7 @@ void TextEditor::insert_at_cursor_or_replace_selection(const StringView& text)
 
 void TextEditor::cut()
 {
-    if (is_readonly())
+    if (!is_editable())
         return;
     auto selected_text = this->selected_text();
     printf("Cut: \"%s\"\n", selected_text.characters());
@@ -1196,8 +1282,9 @@ void TextEditor::copy()
 
 void TextEditor::paste()
 {
-    if (is_readonly())
+    if (!is_editable())
         return;
+
     auto paste_text = Clipboard::the().data();
     printf("Paste: \"%s\"\n", paste_text.characters());
 
@@ -1205,10 +1292,27 @@ void TextEditor::paste()
     insert_at_cursor_or_replace_selection(paste_text);
 }
 
+void TextEditor::defer_reflow()
+{
+    ++m_reflow_deferred;
+}
+
+void TextEditor::undefer_reflow()
+{
+    ASSERT(m_reflow_deferred);
+    if (!--m_reflow_deferred) {
+        if (m_reflow_requested) {
+            recompute_all_visual_lines();
+            scroll_cursor_into_view();
+        }
+    }
+}
+
 void TextEditor::enter_event(Core::Event&)
 {
     ASSERT(window());
-    window()->set_override_cursor(StandardCursor::IBeam);
+    if (!is_displayonly())
+        window()->set_override_cursor(StandardCursor::IBeam);
 
     m_automatic_selection_scroll_timer->stop();
 }
@@ -1241,20 +1345,47 @@ void TextEditor::did_change()
         });
     }
 }
-
-void TextEditor::set_readonly(bool readonly)
+void TextEditor::set_mode(const Mode mode)
 {
-    if (m_readonly == readonly)
+    if (m_mode == mode)
         return;
-    m_readonly = readonly;
-    m_cut_action->set_enabled(!is_readonly() && has_selection());
-    m_delete_action->set_enabled(!is_readonly());
-    m_paste_action->set_enabled(!is_readonly());
+    m_mode = mode;
+    switch (mode) {
+    case Editable:
+        m_cut_action->set_enabled(true && has_selection());
+        m_delete_action->set_enabled(true);
+        m_paste_action->set_enabled(true);
+        set_accepts_emoji_input(true);
+        break;
+    case DisplayOnly:
+    case ReadOnly:
+        m_cut_action->set_enabled(false && has_selection());
+        m_delete_action->set_enabled(false);
+        m_paste_action->set_enabled(false);
+        set_accepts_emoji_input(false);
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+}
+
+void TextEditor::set_has_open_button(bool has_button)
+{
+    if (m_has_open_button == has_button)
+        return;
+    m_has_open_button = has_button;
+}
+
+void TextEditor::set_has_visible_list(bool visible)
+{
+    if (m_has_visible_list == visible)
+        return;
+    m_has_visible_list = visible;
 }
 
 void TextEditor::did_update_selection()
 {
-    m_cut_action->set_enabled(!is_readonly() && has_selection());
+    m_cut_action->set_enabled(is_editable() && has_selection());
     m_copy_action->set_enabled(has_selection());
     if (on_selection_change)
         on_selection_change();
@@ -1266,6 +1397,9 @@ void TextEditor::did_update_selection()
 
 void TextEditor::context_menu_event(ContextMenuEvent& event)
 {
+    if (is_displayonly())
+        return;
+
     if (!m_context_menu) {
         m_context_menu = Menu::construct();
         m_context_menu->add_action(undo_action());
@@ -1333,6 +1467,13 @@ void TextEditor::clear_selection()
 
 void TextEditor::recompute_all_visual_lines()
 {
+    if (m_reflow_deferred) {
+        m_reflow_requested = true;
+        return;
+    }
+
+    m_reflow_requested = false;
+
     int y_offset = 0;
     for (size_t line_index = 0; line_index < line_count(); ++line_index) {
         recompute_visual_lines(line_index);
@@ -1357,7 +1498,7 @@ void TextEditor::ensure_cursor_is_valid()
 size_t TextEditor::visual_line_containing(size_t line_index, size_t column) const
 {
     size_t visual_line_index = 0;
-    for_each_visual_line(line_index, [&](const Gfx::Rect&, const StringView& view, size_t start_of_visual_line) {
+    for_each_visual_line(line_index, [&](const Gfx::IntRect&, auto& view, size_t start_of_visual_line) {
         if (column >= start_of_visual_line && ((column - start_of_visual_line) < view.length()))
             return IterationDecision::Break;
         ++visual_line_index;
@@ -1378,15 +1519,16 @@ void TextEditor::recompute_visual_lines(size_t line_index)
     if (is_line_wrapping_enabled()) {
         int line_width_so_far = 0;
 
+        auto glyph_spacing = font().glyph_spacing();
         for (size_t i = 0; i < line.length(); ++i) {
-            auto ch = line.characters()[i];
-            auto glyph_width = font().glyph_width(ch);
-            if ((line_width_so_far + glyph_width) > available_width) {
+            auto codepoint = line.codepoints()[i];
+            auto glyph_width = font().glyph_or_emoji_width(codepoint);
+            if ((line_width_so_far + glyph_width + glyph_spacing) > available_width) {
                 visual_data.visual_line_breaks.append(i);
-                line_width_so_far = glyph_width;
+                line_width_so_far = glyph_width + glyph_spacing;
                 continue;
             }
-            line_width_so_far += glyph_width;
+            line_width_so_far += glyph_width + glyph_spacing;
         }
     }
 
@@ -1409,8 +1551,8 @@ void TextEditor::for_each_visual_line(size_t line_index, Callback callback) cons
     auto& visual_data = m_line_visual_data[line_index];
 
     for (auto visual_line_break : visual_data.visual_line_breaks) {
-        auto visual_line_view = StringView(line.characters() + start_of_line, visual_line_break - start_of_line);
-        Gfx::Rect visual_line_rect {
+        auto visual_line_view = Utf32View(line.codepoints() + start_of_line, visual_line_break - start_of_line);
+        Gfx::IntRect visual_line_rect {
             visual_data.visual_rect.x(),
             visual_data.visual_rect.y() + ((int)visual_line_index * line_height()),
             font().width(visual_line_view),
@@ -1418,8 +1560,11 @@ void TextEditor::for_each_visual_line(size_t line_index, Callback callback) cons
         };
         if (is_right_text_alignment(text_alignment()))
             visual_line_rect.set_right_without_resize(editor_visible_text_rect.right());
-        if (!is_multi_line())
+        if (is_single_line()) {
             visual_line_rect.center_vertically_within(editor_visible_text_rect);
+            if (m_icon)
+                visual_line_rect.move_by(icon_size() + icon_padding(), 0);
+        }
         if (callback(visual_line_rect, visual_line_view, start_of_line) == IterationDecision::Break)
             break;
         start_of_line = visual_line_break;
@@ -1551,9 +1696,18 @@ int TextEditor::line_height() const
     return font().glyph_height() + m_line_spacing;
 }
 
-int TextEditor::glyph_width() const
+int TextEditor::fixed_glyph_width() const
 {
-    return font().glyph_width('x');
+    ASSERT(font().is_fixed_width());
+    return font().glyph_width(' ');
+}
+
+void TextEditor::set_icon(const Gfx::Bitmap* icon)
+{
+    if (m_icon == icon)
+        return;
+    m_icon = icon;
+    update();
 }
 
 }

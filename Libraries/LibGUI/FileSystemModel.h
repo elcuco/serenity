@@ -43,12 +43,13 @@
     __ENUMERATE_FILETYPE(java, ".java")        \
     __ENUMERATE_FILETYPE(javascript, ".js")    \
     __ENUMERATE_FILETYPE(library, ".so", ".a") \
+    __ENUMERATE_FILETYPE(markdown, ".md")      \
     __ENUMERATE_FILETYPE(object, ".o", ".obj") \
     __ENUMERATE_FILETYPE(pdf, ".pdf")          \
     __ENUMERATE_FILETYPE(python, ".py")        \
     __ENUMERATE_FILETYPE(sound, ".wav")        \
     __ENUMERATE_FILETYPE(ini, ".ini")          \
-    __ENUMERATE_FILETYPE(text, ".txt", ".md")
+    __ENUMERATE_FILETYPE(text, ".txt")
 namespace GUI {
 
 class FileSystemModel
@@ -94,6 +95,9 @@ public:
         bool is_directory() const { return S_ISDIR(mode); }
         bool is_executable() const { return mode & (S_IXUSR | S_IXGRP | S_IXOTH); }
 
+        bool is_selected() const { return m_selected; }
+        void set_selected(bool selected);
+
         bool has_error() const { return m_error != 0; }
         int error() const { return m_error; }
         const char* error_string() const { return strerror(m_error); }
@@ -106,6 +110,8 @@ public:
         Node* parent { nullptr };
         NonnullOwnPtrVector<Node> children;
         bool has_traversed { false };
+
+        bool m_selected { false };
 
         int m_watch_fd { -1 };
         RefPtr<Core::Notifier> m_notifier;
@@ -129,6 +135,9 @@ public:
     String full_path(const ModelIndex&) const;
     ModelIndex index(const StringView& path, int column) const;
 
+    void update_node_on_selection(const ModelIndex&, const bool);
+    ModelIndex m_previously_selected_index {};
+
     const Node& node(const ModelIndex& index) const;
     GUI::Icon icon_for_file(const mode_t mode, const String& name) const;
 
@@ -140,18 +149,21 @@ public:
     virtual int row_count(const ModelIndex& = ModelIndex()) const override;
     virtual int column_count(const ModelIndex& = ModelIndex()) const override;
     virtual String column_name(int column) const override;
-    virtual ColumnMetadata column_metadata(int column) const override;
     virtual Variant data(const ModelIndex&, Role = Role::Display) const override;
     virtual void update() override;
     virtual ModelIndex parent_index(const ModelIndex&) const override;
     virtual ModelIndex index(int row, int column = 0, const ModelIndex& parent = ModelIndex()) const override;
     virtual StringView drag_data_type() const override { return "text/uri-list"; }
     virtual bool accepts_drag(const ModelIndex&, const StringView& data_type) override;
+    virtual bool is_column_sortable(int column_index) const override { return column_index != Column::Icon; }
 
     static String timestamp_string(time_t timestamp)
     {
         return Core::DateTime::from_timestamp(timestamp).to_string();
     }
+
+    bool should_show_dotfiles() const { return m_should_show_dotfiles; }
+    void set_should_show_dotfiles(bool);
 
 private:
     FileSystemModel(const StringView& root_path, Mode);
@@ -170,6 +182,9 @@ private:
     OwnPtr<Node> m_root { nullptr };
 
     GUI::Icon m_directory_icon;
+    GUI::Icon m_directory_open_icon;
+    GUI::Icon m_home_directory_icon;
+    GUI::Icon m_home_directory_open_icon;
     GUI::Icon m_file_icon;
     GUI::Icon m_symlink_icon;
     GUI::Icon m_socket_icon;
@@ -182,6 +197,8 @@ private:
 
     unsigned m_thumbnail_progress { 0 };
     unsigned m_thumbnail_progress_total { 0 };
+
+    bool m_should_show_dotfiles { false };
 };
 
 }

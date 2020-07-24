@@ -28,42 +28,32 @@
 
 #include <AK/FlyString.h>
 #include <AK/String.h>
+#include <LibWeb/DOM/Attribute.h>
+#include <LibWeb/DOM/AttributeNames.h>
 #include <LibWeb/DOM/ParentNode.h>
+#include <LibWeb/DOM/TagNames.h>
 #include <LibWeb/Layout/LayoutNode.h>
 
 namespace Web {
 
 class LayoutNodeWithStyle;
 
-class Attribute {
-public:
-    Attribute(const FlyString& name, const String& value)
-        : m_name(name)
-        , m_value(value)
-    {
-    }
-
-    const FlyString& name() const { return m_name; }
-    const String& value() const { return m_value; }
-
-    void set_value(const String& value) { m_value = value; }
-
-private:
-    FlyString m_name;
-    String m_value;
-};
-
 class Element : public ParentNode {
 public:
     using WrapperType = Bindings::ElementWrapper;
 
-    Element(Document&, const FlyString& tag_name);
+    Element(Document&, const FlyString& local_name);
     virtual ~Element() override;
 
-    virtual FlyString tag_name() const final { return m_tag_name; }
+    virtual FlyString node_name() const final { return m_tag_name; }
+    const FlyString& local_name() const { return m_tag_name; }
+
+    // NOTE: This is for the JS bindings
+    const FlyString& tag_name() const { return local_name(); }
 
     bool has_attribute(const FlyString& name) const { return !attribute(name).is_null(); }
     String attribute(const FlyString& name) const;
+    String get_attribute(const FlyString& name) const { return attribute(name); }
     void set_attribute(const FlyString& name, const String& value);
 
     void set_attributes(Vector<Attribute>&&);
@@ -75,9 +65,10 @@ public:
             callback(attribute.name(), attribute.value());
     }
 
-    bool has_class(const StringView&) const;
+    bool has_class(const FlyString&) const;
+    const Vector<FlyString>& class_names() const { return m_classes; }
 
-    virtual void apply_presentational_hints(StyleProperties&) const {}
+    virtual void apply_presentational_hints(StyleProperties&) const { }
     virtual void parse_attribute(const FlyString& name, const String& value);
 
     void recompute_style();
@@ -85,7 +76,7 @@ public:
     LayoutNodeWithStyle* layout_node() { return static_cast<LayoutNodeWithStyle*>(Node::layout_node()); }
     const LayoutNodeWithStyle* layout_node() const { return static_cast<const LayoutNodeWithStyle*>(Node::layout_node()); }
 
-    String name() const { return attribute("name"); }
+    String name() const { return attribute(HTML::AttributeNames::name); }
 
     const StyleProperties* resolved_style() const { return m_resolved_style.ptr(); }
     NonnullRefPtr<StyleProperties> computed_style();
@@ -93,9 +84,10 @@ public:
     String inner_html() const;
     void set_inner_html(StringView);
 
-private:
-    RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) const override;
+protected:
+    RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) override;
 
+private:
     Attribute* find_attribute(const FlyString& name);
     const Attribute* find_attribute(const FlyString& name) const;
 
@@ -103,6 +95,8 @@ private:
     Vector<Attribute> m_attributes;
 
     RefPtr<StyleProperties> m_resolved_style;
+
+    Vector<FlyString> m_classes;
 };
 
 template<>

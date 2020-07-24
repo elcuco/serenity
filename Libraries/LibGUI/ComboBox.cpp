@@ -24,8 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGUI/Button.h>
 #include <LibGUI/ComboBox.h>
+#include <LibGUI/ControlBoxButton.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/ListView.h>
 #include <LibGUI/Model.h>
@@ -35,9 +35,31 @@
 
 namespace GUI {
 
+class ComboBoxEditor final : public TextEditor {
+    C_OBJECT(ComboBoxEditor);
+
+public:
+    Function<void(int delta)> on_mousewheel;
+
+private:
+    ComboBoxEditor()
+        : TextEditor(TextEditor::SingleLine)
+    {
+    }
+
+    virtual void mousewheel_event(MouseEvent& event) override
+    {
+        if (!is_focused())
+            set_focus(true);
+        if (on_mousewheel)
+            on_mousewheel(event.wheel_delta());
+    }
+};
+
 ComboBox::ComboBox()
 {
-    m_editor = add<TextBox>();
+    m_editor = add<ComboBoxEditor>();
+    m_editor->set_has_open_button(true);
     m_editor->on_change = [this] {
         if (on_change)
             on_change(m_editor->text(), m_list_view->selection().first());
@@ -46,33 +68,71 @@ ComboBox::ComboBox()
         if (on_return_pressed)
             on_return_pressed();
     };
-    m_open_button = add<Button>();
+    m_editor->on_up_pressed = [this] {
+        m_list_view->move_selection(-1);
+    };
+    m_editor->on_down_pressed = [this] {
+        m_list_view->move_selection(1);
+    };
+    m_editor->on_pageup_pressed = [this] {
+        m_list_view->move_selection(-m_list_view->selection().first().row());
+    };
+    m_editor->on_pagedown_pressed = [this] {
+        if (model())
+            m_list_view->move_selection((model()->row_count() - 1) - m_list_view->selection().first().row());
+    };
+    m_editor->on_mousewheel = [this](int delta) {
+        m_list_view->move_selection(delta);
+    };
+    m_editor->on_mousedown = [this] {
+        if (only_allow_values_from_model())
+            m_open_button->click();
+    };
+
+    m_open_button = add<ControlBoxButton>(ControlBoxButton::DownArrow);
     m_open_button->set_focusable(false);
-    m_open_button->set_text("\xc3\xb7");
-    m_open_button->on_click = [this] {
+    m_open_button->on_click = [this](auto) {
         if (m_list_window->is_visible())
             close();
         else
             open();
     };
 
-    m_list_window = add<Window>();
+    m_list_window = add<Window>(window());
     m_list_window->set_frameless(true);
+    m_list_window->set_accessory(true);
+    m_list_window->on_active_input_change = [this](bool is_active_input) {
+        if (!is_active_input) {
+            m_open_button->set_enabled(false);
+            close();
+        }
+        m_open_button->set_enabled(true);
+    };
 
     m_list_view = m_list_window->set_main_widget<ListView>();
     m_list_view->horizontal_scrollbar().set_visible(false);
-
+    m_list_view->set_alternating_row_colors(false);
+    m_list_view->set_hover_highlighting(true);
+    m_list_view->set_frame_thickness(1);
+    m_list_view->set_frame_shadow(Gfx::FrameShadow::Plain);
     m_list_view->on_selection = [this](auto& index) {
         ASSERT(model());
+        m_list_view->set_activates_on_selection(true);
         auto new_value = model()->data(index).to_string();
         m_editor->set_text(new_value);
         if (!m_only_allow_values_from_model)
             m_editor->select_all();
-        close();
         deferred_invoke([this, index](auto&) {
             if (on_change)
                 on_change(m_editor->text(), index);
         });
+    };
+    m_list_view->on_activation = [this](auto&) {
+        m_list_view->set_activates_on_selection(false);
+        close();
+    };
+    m_list_view->on_escape_pressed = [this] {
+        close();
     };
 }
 
@@ -121,14 +181,19 @@ void ComboBox::open()
         auto item_text = model()->data(index).to_string();
         longest_item_width = max(longest_item_width, m_list_view->font().width(item_text));
     }
-    Gfx::Size size {
+    Gfx::IntSize size {
         max(width(), longest_item_width + m_list_view->width_occupied_by_vertical_scrollbar() + m_list_view->frame_thickness() * 2 + m_list_view->horizontal_padding()),
         model()->row_count() * m_list_view->item_height() + m_list_view->frame_thickness() * 2
     };
 
-    Gfx::Rect list_window_rect { my_screen_rect.bottom_left(), size };
+    Gfx::IntRect list_window_rect { my_screen_rect.bottom_left(), size };
     list_window_rect.intersect(Desktop::the().rect().shrunken(0, 128));
 
+    if (m_list_view->hover_highlighting())
+        m_list_view->set_last_valid_hovered_index({});
+
+    m_editor->set_has_visible_list(true);
+    m_editor->set_focus(true);
     m_list_window->set_rect(list_window_rect);
     m_list_window->show();
 }
@@ -136,6 +201,7 @@ void ComboBox::open()
 void ComboBox::close()
 {
     m_list_window->hide();
+    m_editor->set_has_visible_list(false);
     m_editor->set_focus(true);
 }
 
@@ -154,7 +220,7 @@ void ComboBox::set_only_allow_values_from_model(bool b)
     if (m_only_allow_values_from_model == b)
         return;
     m_only_allow_values_from_model = b;
-    m_editor->set_readonly(m_only_allow_values_from_model);
+    m_editor->set_mode(m_only_allow_values_from_model ? TextEditor::DisplayOnly : TextEditor::Editable);
 }
 
 Model* ComboBox::model()

@@ -34,13 +34,10 @@ class LayoutTableRow;
 
 class LayoutTable final : public LayoutBlock {
 public:
-    LayoutTable(const Element&, NonnullRefPtr<StyleProperties>);
+    LayoutTable(Document&, const Element&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutTable() override;
 
-    virtual void layout() override;
-
-    LayoutTableRow* first_row();
-    const LayoutTableRow* first_row() const;
+    virtual void layout(LayoutMode = LayoutMode::Default) override;
 
 private:
     virtual bool is_table() const override { return true; }

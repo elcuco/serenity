@@ -54,7 +54,7 @@ void SharedBuffer::sanity_check(const char* what)
     }
 }
 
-bool SharedBuffer::is_shared_with(pid_t peer_pid)
+bool SharedBuffer::is_shared_with(pid_t peer_pid) const
 {
     LOCKER(shared_buffers().lock(), Lock::Mode::Shared);
     if (m_global)
@@ -132,7 +132,6 @@ void SharedBuffer::deref_for_process(Process& process)
                 dbg() << "Releasing shared buffer reference on " << m_shbuf_id << " of size " << size() << " by PID " << process.pid();
 #endif
                 process.deallocate_region(*ref.region);
-                m_refs.unstable_remove(i);
 #ifdef SHARED_BUFFER_DEBUG
                 dbg() << "Released shared buffer reference on " << m_shbuf_id << " of size " << size() << " by PID " << process.pid();
 #endif
@@ -157,7 +156,7 @@ void SharedBuffer::disown(pid_t pid)
             dbg() << "Disowning shared buffer " << m_shbuf_id << " of size " << size() << " by PID " << pid;
 #endif
             m_total_refs -= ref.count;
-            m_refs.unstable_remove(i);
+            m_refs.unstable_take(i);
 #ifdef SHARED_BUFFER_DEBUG
             dbg() << "Disowned shared buffer " << m_shbuf_id << " of size " << size() << " by PID " << pid;
 #endif

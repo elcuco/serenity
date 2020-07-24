@@ -24,9 +24,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
+#include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/DirIterator.h>
+#include <LibCore/File.h>
+#include <LibCore/StandardPaths.h>
 #include <LibGUI/FileSystemModel.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
@@ -73,14 +76,9 @@ bool FileSystemModel::Node::fetch_data(const String& full_path, bool is_root)
     mtime = st.st_mtime;
 
     if (S_ISLNK(mode)) {
-        char buffer[PATH_MAX];
-        int length = readlink(full_path.characters(), buffer, sizeof(buffer));
-        if (length < 0) {
+        symlink_target = Core::File::read_link(full_path);
+        if (symlink_target.is_null())
             perror("readlink");
-        } else {
-            ASSERT(length > 0);
-            symlink_target = String(buffer, length - 1);
-        }
     }
 
     return true;
@@ -94,15 +92,20 @@ void FileSystemModel::Node::traverse_if_needed(const FileSystemModel& model)
     total_size = 0;
 
     auto full_path = this->full_path(model);
-    Core::DirIterator di(full_path, Core::DirIterator::SkipDots);
+    Core::DirIterator di(full_path, model.should_show_dotfiles() ? Core::DirIterator::SkipParentAndBaseDir : Core::DirIterator::SkipDots);
     if (di.has_error()) {
         m_error = di.error();
         fprintf(stderr, "DirIterator: %s\n", di.error_string());
         return;
     }
 
+    Vector<String> child_names;
     while (di.has_next()) {
-        String name = di.next_path();
+        child_names.append(di.next_path());
+    }
+    quick_sort(child_names);
+
+    for (auto& name : child_names) {
         String child_path = String::format("%s/%s", full_path.characters(), name.characters());
         NonnullOwnPtr<Node> child = make<Node>();
         bool ok = child->fetch_data(child_path, false);
@@ -162,24 +165,24 @@ String FileSystemModel::Node::full_path(const FileSystemModel& model) const
     }
     builder.append('/');
     builder.append(name);
-    return canonicalized_path(builder.to_string());
+    return LexicalPath::canonicalized_path(builder.to_string());
 }
 
 ModelIndex FileSystemModel::index(const StringView& path, int column) const
 {
-    FileSystemPath canonical_path(path);
+    LexicalPath lexical_path(path);
     const Node* node = m_root;
-    if (canonical_path.string() == "/")
+    if (lexical_path.string() == "/")
         return m_root->index(*this, column);
-    for (size_t i = 0; i < canonical_path.parts().size(); ++i) {
-        auto& part = canonical_path.parts()[i];
+    for (size_t i = 0; i < lexical_path.parts().size(); ++i) {
+        auto& part = lexical_path.parts()[i];
         bool found = false;
         for (auto& child : node->children) {
             if (child.name == part) {
                 const_cast<Node&>(child).reify_if_needed(*this);
                 node = &child;
                 found = true;
-                if (i == canonical_path.parts().size() - 1)
+                if (i == lexical_path.parts().size() - 1)
                     return child.index(*this, column);
                 break;
             }
@@ -198,10 +201,13 @@ String FileSystemModel::full_path(const ModelIndex& index) const
 }
 
 FileSystemModel::FileSystemModel(const StringView& root_path, Mode mode)
-    : m_root_path(canonicalized_path(root_path))
+    : m_root_path(LexicalPath::canonicalized_path(root_path))
     , m_mode(mode)
 {
     m_directory_icon = Icon::default_icon("filetype-folder");
+    m_directory_open_icon = Icon::default_icon("filetype-folder-open");
+    m_home_directory_icon = Icon::default_icon("home-directory");
+    m_home_directory_open_icon = Icon::default_icon("home-directory-open");
     m_file_icon = Icon::default_icon("filetype-unknown");
     m_symlink_icon = Icon::default_icon("filetype-symlink");
     m_socket_icon = Icon::default_icon("filetype-socket");
@@ -282,9 +288,22 @@ static String permission_string(mode_t mode)
     return builder.to_string();
 }
 
+void FileSystemModel::Node::set_selected(bool selected)
+{
+    if (m_selected == selected)
+        return;
+    m_selected = selected;
+}
+
+void FileSystemModel::update_node_on_selection(const ModelIndex& index, const bool selected)
+{
+    Node& node = const_cast<Node&>(this->node(index));
+    node.set_selected(selected);
+}
+
 void FileSystemModel::set_root_path(const StringView& root_path)
 {
-    m_root_path = canonicalized_path(root_path);
+    m_root_path = LexicalPath::canonicalized_path(root_path);
     update();
 
     if (m_root->has_error()) {
@@ -316,6 +335,7 @@ const FileSystemModel::Node& FileSystemModel::node(const ModelIndex& index) cons
 {
     if (!index.is_valid())
         return *m_root;
+    ASSERT(index.internal_data());
     return *(Node*)index.internal_data();
 }
 
@@ -345,6 +365,26 @@ ModelIndex FileSystemModel::parent_index(const ModelIndex& index) const
 Variant FileSystemModel::data(const ModelIndex& index, Role role) const
 {
     ASSERT(index.is_valid());
+
+    if (role == Role::TextAlignment) {
+        switch (index.column()) {
+        case Column::Icon:
+            return Gfx::TextAlignment::Center;
+        case Column::Size:
+        case Column::Inode:
+            return Gfx::TextAlignment::CenterRight;
+        case Column::Name:
+        case Column::Owner:
+        case Column::Group:
+        case Column::ModificationTime:
+        case Column::Permissions:
+        case Column::SymlinkTarget:
+            return Gfx::TextAlignment::CenterLeft;
+        default:
+            ASSERT_NOT_REACHED();
+        }
+    }
+
     auto& node = this->node(index);
 
     if (role == Role::Custom) {
@@ -440,12 +480,22 @@ Icon FileSystemModel::icon_for_file(const mode_t mode, const String& name) const
 
 Icon FileSystemModel::icon_for(const Node& node) const
 {
-    if (node.name.to_lowercase().ends_with(".png") || node.name.to_lowercase().ends_with(".gif")) {
+    if (Gfx::Bitmap::is_path_a_supported_image_format(node.name.to_lowercase())) {
         if (!node.thumbnail) {
             if (!const_cast<FileSystemModel*>(this)->fetch_thumbnail_for(node))
                 return m_filetype_image_icon;
         }
         return GUI::Icon(m_filetype_image_icon.bitmap_for_size(16), *node.thumbnail);
+    }
+
+    if (node.is_directory()) {
+        if (node.full_path(*this) == Core::StandardPaths::home_directory()) {
+            if (node.is_selected())
+                return m_home_directory_open_icon;
+            return m_home_directory_icon;
+        }
+        if (node.is_selected())
+            return m_directory_open_icon;
     }
 
     return icon_for_file(node.mode, node.name);
@@ -462,7 +512,7 @@ static RefPtr<Gfx::Bitmap> render_thumbnail(const StringView& path)
     double scale = min(32 / (double)png_bitmap->width(), 32 / (double)png_bitmap->height());
 
     auto thumbnail = Gfx::Bitmap::create(png_bitmap->format(), { 32, 32 });
-    Gfx::Rect destination = Gfx::Rect(0, 0, (int)(png_bitmap->width() * scale), (int)(png_bitmap->height() * scale));
+    Gfx::IntRect destination = Gfx::IntRect(0, 0, (int)(png_bitmap->width() * scale), (int)(png_bitmap->height() * scale));
     destination.center_within(thumbnail->rect());
 
     Painter painter(*thumbnail);
@@ -548,31 +598,6 @@ String FileSystemModel::column_name(int column) const
     ASSERT_NOT_REACHED();
 }
 
-Model::ColumnMetadata FileSystemModel::column_metadata(int column) const
-{
-    switch (column) {
-    case Column::Icon:
-        return { 16, Gfx::TextAlignment::Center, nullptr, Model::ColumnMetadata::Sortable::False };
-    case Column::Name:
-        return { 120, Gfx::TextAlignment::CenterLeft };
-    case Column::Size:
-        return { 80, Gfx::TextAlignment::CenterRight };
-    case Column::Owner:
-        return { 50, Gfx::TextAlignment::CenterLeft };
-    case Column::Group:
-        return { 50, Gfx::TextAlignment::CenterLeft };
-    case Column::ModificationTime:
-        return { 110, Gfx::TextAlignment::CenterLeft };
-    case Column::Permissions:
-        return { 65, Gfx::TextAlignment::CenterLeft };
-    case Column::Inode:
-        return { 60, Gfx::TextAlignment::CenterRight };
-    case Column::SymlinkTarget:
-        return { 120, Gfx::TextAlignment::CenterLeft };
-    }
-    ASSERT_NOT_REACHED();
-}
-
 bool FileSystemModel::accepts_drag(const ModelIndex& index, const StringView& data_type)
 {
     if (!index.is_valid())
@@ -581,6 +606,14 @@ bool FileSystemModel::accepts_drag(const ModelIndex& index, const StringView& da
         return false;
     auto& node = this->node(index);
     return node.is_directory();
+}
+
+void FileSystemModel::set_should_show_dotfiles(bool show)
+{
+    if (m_should_show_dotfiles == show)
+        return;
+    m_should_show_dotfiles = show;
+    update();
 }
 
 }

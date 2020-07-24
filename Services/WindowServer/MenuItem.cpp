@@ -71,6 +71,14 @@ void MenuItem::set_checked(bool checked)
     m_menu.redraw();
 }
 
+void MenuItem::set_default(bool is_default)
+{
+    if (m_default == is_default)
+        return;
+    m_default = is_default;
+    m_menu.redraw();
+}
+
 Menu* MenuItem::submenu()
 {
     ASSERT(is_submenu());
@@ -78,7 +86,14 @@ Menu* MenuItem::submenu()
     return m_menu.client()->find_menu_by_id(m_submenu_id);
 }
 
-Gfx::Rect MenuItem::rect() const
+const Menu* MenuItem::submenu() const
+{
+    ASSERT(is_submenu());
+    ASSERT(m_menu.client());
+    return m_menu.client()->find_menu_by_id(m_submenu_id);
+}
+
+Gfx::IntRect MenuItem::rect() const
 {
     if (!m_menu.is_scrollable())
         return m_rect;

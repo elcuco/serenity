@@ -28,10 +28,10 @@
 
 #include <AK/WeakPtr.h>
 #include <LibJS/Heap/Heap.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Forward.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
 class Wrappable {
 public:
@@ -46,12 +46,12 @@ private:
 };
 
 template<class NativeObject>
-inline Wrapper* wrap_impl(JS::Heap& heap, NativeObject& native_object)
+inline Wrapper* wrap_impl(JS::GlobalObject& global_object, NativeObject& native_object)
 {
-    if (!native_object.wrapper())
-        native_object.set_wrapper(*heap.allocate<typename NativeObject::WrapperType>(native_object));
+    if (!native_object.wrapper()) {
+        native_object.set_wrapper(*global_object.heap().allocate<typename NativeObject::WrapperType>(global_object, global_object, native_object));
+    }
     return native_object.wrapper();
 }
 
-}
 }

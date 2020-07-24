@@ -54,7 +54,7 @@ public:
     bool operator<(const VectorIterator& other) const { return m_index < other.m_index; }
     bool operator>(const VectorIterator& other) const { return m_index > other.m_index; }
     bool operator>=(const VectorIterator& other) const { return m_index >= other.m_index; }
-    VectorIterator& operator++()
+    ALWAYS_INLINE VectorIterator& operator++()
     {
         ++m_index;
         return *this;
@@ -71,7 +71,7 @@ public:
         m_index = other.m_index;
         return *this;
     }
-    ElementType& operator*() { return m_vector[m_index]; }
+    ALWAYS_INLINE ElementType& operator*() { return m_vector[m_index]; }
     size_t operator-(const VectorIterator& other) { return m_index - other.m_index; }
 
     bool is_end() const { return m_index == m_vector.size(); }
@@ -268,12 +268,12 @@ public:
 
     ALWAYS_INLINE const T& at(size_t i) const
     {
-        ASSERT(i >= 0 && i < m_size);
+        ASSERT(i < m_size);
         return data()[i];
     }
     ALWAYS_INLINE T& at(size_t i)
     {
-        ASSERT(i >= 0 && i < m_size);
+        ASSERT(i < m_size);
         return data()[i];
     }
 
@@ -310,11 +310,11 @@ public:
         return value;
     }
 
-    void unstable_remove(size_t index)
+    T unstable_take(size_t index)
     {
         ASSERT(index < m_size);
         swap(at(index), at(m_size - 1));
-        take_last();
+        return take_last();
     }
 
     void remove(size_t index)

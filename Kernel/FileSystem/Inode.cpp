@@ -36,8 +36,12 @@
 
 namespace Kernel {
 
+static SpinLock s_all_inodes_lock;
+
 InlineLinkedList<Inode>& all_inodes()
 {
+    ASSERT(s_all_inodes_lock.is_locked());
+
     static InlineLinkedList<Inode>* list;
     if (!list)
         list = new InlineLinkedList<Inode>;
@@ -48,7 +52,7 @@ void Inode::sync()
 {
     NonnullRefPtrVector<Inode, 32> inodes;
     {
-        InterruptDisabler disabler;
+        ScopedSpinLock all_inodes_lock(s_all_inodes_lock);
         for (auto& inode : all_inodes()) {
             if (inode.is_metadata_dirty())
                 inodes.append(inode);
@@ -61,7 +65,7 @@ void Inode::sync()
     }
 }
 
-ByteBuffer Inode::read_entire(FileDescription* descriptor) const
+KResultOr<ByteBuffer> Inode::read_entire(FileDescription* descriptor) const
 {
     size_t initial_size = metadata().size ? metadata().size : 4096;
     StringBuilder builder(initial_size);
@@ -92,8 +96,11 @@ KResultOr<NonnullRefPtr<Custody>> Inode::resolve_as_link(Custody& base, RefPtr<C
     // The default implementation simply treats the stored
     // contents as a path and resolves that. That is, it
     // behaves exactly how you would expect a symlink to work.
-    auto contents = read_entire();
+    auto contents_or = read_entire();
+    if (contents_or.is_error())
+        return contents_or.error();
 
+    auto& contents = contents_or.value();
     if (!contents) {
         if (out_parent)
             *out_parent = nullptr;
@@ -104,20 +111,17 @@ KResultOr<NonnullRefPtr<Custody>> Inode::resolve_as_link(Custody& base, RefPtr<C
     return VFS::the().resolve_path(path, base, out_parent, options, symlink_recursion_level);
 }
 
-unsigned Inode::fsid() const
-{
-    return m_fs.fsid();
-}
-
 Inode::Inode(FS& fs, unsigned index)
     : m_fs(fs)
     , m_index(index)
 {
+    ScopedSpinLock all_inodes_lock(s_all_inodes_lock);
     all_inodes().append(this);
 }
 
 Inode::~Inode()
 {
+    ScopedSpinLock all_inodes_lock(s_all_inodes_lock);
     all_inodes().remove(this);
 }
 
@@ -201,6 +205,18 @@ void Inode::unregister_watcher(Badge<InodeWatcher>, InodeWatcher& watcher)
     m_watchers.remove(&watcher);
 }
 
+FIFO& Inode::fifo()
+{
+    ASSERT(metadata().is_fifo());
+
+    // FIXME: Release m_fifo when it is closed by all readers and writers
+    if (!m_fifo)
+        m_fifo = FIFO::create(metadata().uid);
+
+    ASSERT(m_fifo);
+    return *m_fifo;
+}
+
 void Inode::set_metadata_dirty(bool metadata_dirty)
 {
     if (m_metadata_dirty == metadata_dirty)
@@ -214,6 +230,22 @@ void Inode::set_metadata_dirty(bool metadata_dirty)
         for (auto& watcher : m_watchers) {
             watcher->notify_inode_event({}, InodeWatcher::Event::Type::Modified);
         }
+    }
+}
+
+void Inode::did_add_child(const String& name)
+{
+    LOCKER(m_lock);
+    for (auto& watcher : m_watchers) {
+        watcher->notify_child_added({}, name);
+    }
+}
+
+void Inode::did_remove_child(const String& name)
+{
+    LOCKER(m_lock);
+    for (auto& watcher : m_watchers) {
+        watcher->notify_child_removed({}, name);
     }
 }
 

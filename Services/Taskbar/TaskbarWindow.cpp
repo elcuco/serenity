@@ -35,6 +35,7 @@
 #include <LibGUI/Frame.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/Window.h>
+#include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Palette.h>
 #include <stdio.h>
 
@@ -65,7 +66,7 @@ TaskbarWindow::TaskbarWindow()
 
     on_screen_rect_change(GUI::Desktop::the().rect());
 
-    GUI::Desktop::the().on_rect_change = [this](const Gfx::Rect& rect) { on_screen_rect_change(rect); };
+    GUI::Desktop::the().on_rect_change = [this](const Gfx::IntRect& rect) { on_screen_rect_change(rect); };
 
     auto& widget = set_main_widget<TaskbarWidget>();
     widget.set_layout<GUI::HorizontalBoxLayout>();
@@ -73,10 +74,6 @@ TaskbarWindow::TaskbarWindow()
     widget.layout()->set_spacing(3);
 
     m_default_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window.png");
-
-    WindowList::the().aid_create_button = [this](auto& identifier) {
-        return create_button(identifier);
-    };
 
     create_quick_launch_bar();
 }
@@ -107,6 +104,7 @@ void TaskbarWindow::create_quick_launch_bar()
         auto af_path = String::format("/res/apps/%s", af_name.characters());
         auto af = Core::ConfigFile::open(af_path);
         auto app_executable = af->read_entry("App", "Executable");
+        auto app_name = af->read_entry("App", "Name");
         auto app_icon_path = af->read_entry("Icons", "16x16");
 
         auto& button = quick_launch_bar.add<GUI::Button>();
@@ -115,8 +113,8 @@ void TaskbarWindow::create_quick_launch_bar()
         button.set_button_style(Gfx::ButtonStyle::CoolBar);
 
         button.set_icon(Gfx::Bitmap::load_from_file(app_icon_path));
-        button.set_tooltip(name);
-        button.on_click = [app_executable] {
+        button.set_tooltip(app_name);
+        button.on_click = [app_executable](auto) {
             pid_t pid = fork();
             if (pid < 0) {
                 perror("fork");
@@ -140,9 +138,9 @@ void TaskbarWindow::create_quick_launch_bar()
     quick_launch_bar.set_preferred_size(total_width, 22);
 }
 
-void TaskbarWindow::on_screen_rect_change(const Gfx::Rect& rect)
+void TaskbarWindow::on_screen_rect_change(const Gfx::IntRect& rect)
 {
-    Gfx::Rect new_rect { rect.x(), rect.bottom() - taskbar_height() + 1, rect.width(), taskbar_height() };
+    Gfx::IntRect new_rect { rect.x(), rect.bottom() - taskbar_height() + 1, rect.width(), taskbar_height() };
     set_rect(new_rect);
 }
 
@@ -159,6 +157,67 @@ NonnullRefPtr<GUI::Button> TaskbarWindow::create_button(const WindowIdentifier& 
 static bool should_include_window(GUI::WindowType window_type, bool is_frameless)
 {
     return window_type == GUI::WindowType::Normal && !is_frameless;
+}
+
+void TaskbarWindow::add_window_button(::Window& window, const WindowIdentifier& identifier)
+{
+    if (window.button())
+        return;
+    window.set_button(create_button(identifier));
+    auto* button = window.button();
+    button->on_click = [window = &window, identifier, button](auto) {
+        // We need to look at the button's checked state here to figure
+        // out if the application is active or not. That's because this
+        // button's window may not actually be active when a modal window
+        // is displayed, in which case window->is_active() would return
+        // false because window is the modal window's owner (which is not
+        // active)
+        if (window->is_minimized() || !button->is_checked()) {
+            GUI::WindowServerConnection::the().post_message(Messages::WindowServer::WM_SetActiveWindow(identifier.client_id(), identifier.window_id()));
+        } else {
+            GUI::WindowServerConnection::the().post_message(Messages::WindowServer::WM_SetWindowMinimized(identifier.client_id(), identifier.window_id(), true));
+        }
+    };
+}
+
+void TaskbarWindow::remove_window_button(::Window& window)
+{
+    auto* button = window.button();
+    if (!button)
+        return;
+    window.set_button(nullptr);
+    button->remove_from_parent();
+}
+
+void TaskbarWindow::update_window_button(::Window& window, bool show_as_active)
+{
+    auto* button = window.button();
+    if (!button)
+        return;
+
+    if (window.is_minimized()) {
+        button->set_foreground_color(Color::DarkGray);
+    } else {
+        button->set_foreground_color(Color::Black);
+    }
+    button->set_text(window.title());
+    button->set_checked(show_as_active);
+}
+
+::Window* TaskbarWindow::find_window_owner(::Window& window) const
+{
+    if (!window.is_modal())
+        return &window;
+
+    ::Window* parent = nullptr;
+    auto* current_window = &window;
+    while (current_window) {
+        parent = WindowList::the().find_parent(*current_window);
+        if (!parent || !parent->is_modal())
+            break;
+        current_window = parent;
+    }
+    return parent;
 }
 
 void TaskbarWindow::wm_event(GUI::WMEvent& event)
@@ -198,7 +257,8 @@ void TaskbarWindow::wm_event(GUI::WMEvent& event)
         if (auto* window = WindowList::the().window(identifier)) {
             auto buffer = SharedBuffer::create_from_shbuf_id(changed_event.icon_buffer_id());
             ASSERT(buffer);
-            window->button()->set_icon(Gfx::Bitmap::create_with_shared_buffer(Gfx::BitmapFormat::RGBA32, *buffer, changed_event.icon_size()));
+            if (window->button())
+                window->button()->set_icon(Gfx::Bitmap::create_with_shared_buffer(Gfx::BitmapFormat::RGBA32, *buffer, changed_event.icon_size()));
         }
         break;
     }
@@ -217,18 +277,27 @@ void TaskbarWindow::wm_event(GUI::WMEvent& event)
         if (!should_include_window(changed_event.window_type(), changed_event.is_frameless()))
             break;
         auto& window = WindowList::the().ensure_window(identifier);
+        window.set_parent_identifier({ changed_event.parent_client_id(), changed_event.parent_window_id() });
+        if (!window.is_modal())
+            add_window_button(window, identifier);
+        else
+            remove_window_button(window);
         window.set_title(changed_event.title());
         window.set_rect(changed_event.rect());
+        window.set_modal(changed_event.is_modal());
         window.set_active(changed_event.is_active());
         window.set_minimized(changed_event.is_minimized());
-        if (window.is_minimized()) {
-            window.button()->set_foreground_color(Color::DarkGray);
-            window.button()->set_text(String::format("[%s]", changed_event.title().characters()));
-        } else {
-            window.button()->set_foreground_color(Color::Black);
-            window.button()->set_text(changed_event.title());
+        window.set_progress(changed_event.progress());
+
+        auto* window_owner = find_window_owner(window);
+        if (window_owner == &window) {
+            update_window_button(window, window.is_active());
+        } else if (window_owner) {
+            // check the window owner's button if the modal's window button
+            // would have been checked
+            ASSERT(window.is_modal());
+            update_window_button(*window_owner, window.is_active());
         }
-        window.button()->set_checked(changed_event.is_active());
         break;
     }
     default:

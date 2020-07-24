@@ -27,6 +27,10 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/Atomic.h>
+#include <AK/Checked.h>
+#include <AK/Noncopyable.h>
+#include <AK/Platform.h>
 #include <AK/StdLibExtras.h>
 
 namespace AK {
@@ -56,32 +60,38 @@ constexpr auto call_one_ref_left_if_present(...) -> FalseType
 }
 
 class RefCountedBase {
+    AK_MAKE_NONCOPYABLE(RefCountedBase)
+    AK_MAKE_NONMOVABLE(RefCountedBase)
 public:
-    void ref() const
+    typedef unsigned int RefCountType;
+
+    ALWAYS_INLINE void ref() const
     {
-        ASSERT(m_ref_count);
-        ++m_ref_count;
+        auto old_ref_count = m_ref_count++;
+        ASSERT(old_ref_count > 0);
+        ASSERT(!Checked<RefCountType>::addition_would_overflow(old_ref_count, 1));
     }
 
-    int ref_count() const
+    ALWAYS_INLINE RefCountType ref_count() const
     {
         return m_ref_count;
     }
 
 protected:
-    RefCountedBase() {}
-    ~RefCountedBase()
+    RefCountedBase() { }
+    ALWAYS_INLINE ~RefCountedBase()
     {
-        ASSERT(!m_ref_count);
+        ASSERT(m_ref_count == 0);
     }
 
-    void deref_base() const
+    ALWAYS_INLINE RefCountType deref_base() const
     {
-        ASSERT(m_ref_count);
-        --m_ref_count;
+        auto old_ref_count = m_ref_count--;
+        ASSERT(old_ref_count > 0);
+        return old_ref_count - 1;
     }
 
-    mutable int m_ref_count { 1 };
+    mutable Atomic<RefCountType> m_ref_count { 1 };
 };
 
 template<typename T>
@@ -89,15 +99,25 @@ class RefCounted : public RefCountedBase {
 public:
     void unref() const
     {
-        deref_base();
-        if (m_ref_count == 0) {
+        auto new_ref_count = deref_base();
+        if (new_ref_count == 0) {
             call_will_be_destroyed_if_present(static_cast<const T*>(this));
             delete static_cast<const T*>(this);
-        } else if (m_ref_count == 1) {
+        } else if (new_ref_count == 1) {
             call_one_ref_left_if_present(static_cast<const T*>(this));
         }
     }
 };
+
+static constexpr bool is_ref_counted(const RefCountedBase*)
+{
+    return true;
+}
+
+static constexpr bool is_ref_counted(...)
+{
+    return false;
+}
 
 }
 

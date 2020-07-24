@@ -32,73 +32,82 @@
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
 #include <LibWeb/DOM/XMLHttpRequest.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
-XMLHttpRequestPrototype::XMLHttpRequestPrototype()
-    : Object(interpreter().global_object().object_prototype())
+XMLHttpRequestPrototype::XMLHttpRequestPrototype(JS::GlobalObject& global_object)
+    : Object(*global_object.object_prototype())
 {
-    put_native_function("open", open, 2);
-    put_native_function("send", send, 0);
-    put_native_property("readyState", ready_state_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
-    put_native_property("responseText", response_text_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+}
 
-    put("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
-    put("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
-    put("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
-    put("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
-    put("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
+void XMLHttpRequestPrototype::initialize(JS::GlobalObject& global_object)
+{
+    Object::initialize(global_object);
+    define_native_function("open", open, 2);
+    define_native_function("send", send, 0);
+    define_native_property("readyState", ready_state_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+    define_native_property("responseText", response_text_getter, nullptr, JS::Attribute::Enumerable | JS::Attribute::Configurable);
+
+    define_property("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
+    define_property("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
+    define_property("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
+    define_property("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
+    define_property("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
 }
 
 XMLHttpRequestPrototype::~XMLHttpRequestPrototype()
 {
 }
 
-static XMLHttpRequest* impl_from(JS::Interpreter& interpreter)
+static XMLHttpRequest* impl_from(JS::Interpreter& interpreter, JS::GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return nullptr;
     if (StringView("XMLHttpRequestWrapper") != this_object->class_name()) {
-        interpreter.throw_exception<JS::TypeError>("This is not an XMLHttpRequest object");
+        interpreter.throw_exception<JS::TypeError>(JS::ErrorType::NotA, "XMLHttpRequest");
         return nullptr;
     }
     return &static_cast<XMLHttpRequestWrapper*>(this_object)->impl();
 }
 
-JS::Value XMLHttpRequestPrototype::open(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(XMLHttpRequestPrototype::open)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
-    impl->open(interpreter.argument(0).to_string(), interpreter.argument(1).to_string());
+    auto arg0 = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    auto arg1 = interpreter.argument(1).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    impl->open(arg0, arg1);
     return JS::js_undefined();
 }
 
-JS::Value XMLHttpRequestPrototype::send(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(XMLHttpRequestPrototype::send)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
     impl->send();
     return JS::js_undefined();
 }
 
-JS::Value XMLHttpRequestPrototype::ready_state_getter(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(XMLHttpRequestPrototype::ready_state_getter)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
     return JS::Value((i32)impl->ready_state());
 }
 
-JS::Value XMLHttpRequestPrototype::response_text_getter(JS::Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(XMLHttpRequestPrototype::response_text_getter)
 {
-    auto* impl = impl_from(interpreter);
+    auto* impl = impl_from(interpreter, global_object);
     if (!impl)
         return {};
     return JS::js_string(interpreter, impl->response_text());
 }
 
-}
 }

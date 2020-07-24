@@ -60,6 +60,35 @@ NonnullRefPtr<FileDescription> FIFO::open_direction(FIFO::Direction direction)
     return description;
 }
 
+NonnullRefPtr<FileDescription> FIFO::open_direction_blocking(FIFO::Direction direction)
+{
+    Locker locker(m_open_lock);
+
+    auto description = open_direction(direction);
+
+    if (direction == Direction::Reader) {
+        m_read_open_queue.wake_all();
+
+        if (m_writers == 0) {
+            locker.unlock();
+            Thread::current()->wait_on(m_write_open_queue, "FIFO");
+            locker.lock();
+        }
+    }
+
+    if (direction == Direction::Writer) {
+        m_write_open_queue.wake_all();
+
+        if (m_readers == 0) {
+            locker.unlock();
+            Thread::current()->wait_on(m_read_open_queue, "FIFO");
+            locker.lock();
+        }
+    }
+
+    return description;
+}
+
 FIFO::FIFO(uid_t uid)
     : m_uid(uid)
 {
@@ -133,7 +162,7 @@ ssize_t FIFO::read(FileDescription&, size_t, u8* buffer, ssize_t size)
 ssize_t FIFO::write(FileDescription&, size_t, const u8* buffer, ssize_t size)
 {
     if (!m_readers) {
-        Thread::current->send_signal(SIGPIPE, Process::current);
+        Thread::current()->send_signal(SIGPIPE, Process::current());
         return -EPIPE;
     }
 #ifdef FIFO_DEBUG

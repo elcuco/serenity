@@ -31,29 +31,30 @@
 namespace JS {
 
 class ErrorPrototype final : public Object {
+    JS_OBJECT(ErrorPrototype, Object);
+
 public:
-    ErrorPrototype();
+    explicit ErrorPrototype(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~ErrorPrototype() override;
 
 private:
-    virtual const char* class_name() const override { return "ErrorPrototype"; }
+    JS_DECLARE_NATIVE_FUNCTION(to_string);
 
-    static Value to_string(Interpreter&);
+    JS_DECLARE_NATIVE_GETTER(name_getter);
+    JS_DECLARE_NATIVE_SETTER(name_setter);
 
-    static Value name_getter(Interpreter&);
-    static void name_setter(Interpreter&, Value);
-
-    static Value message_getter(Interpreter&);
+    JS_DECLARE_NATIVE_GETTER(message_getter);
 };
 
 #define DECLARE_ERROR_SUBCLASS_PROTOTYPE(ClassName, snake_name, PrototypeName, ConstructorName) \
     class PrototypeName final : public Object {                                                 \
-    public:                                                                                     \
-        PrototypeName();                                                                        \
-        virtual ~PrototypeName() override;                                                      \
+        JS_OBJECT(PrototypeName, Object);                                                       \
                                                                                                 \
-    private:                                                                                    \
-        virtual const char* class_name() const override;                                        \
+    public:                                                                                     \
+        explicit PrototypeName(GlobalObject&);                                                  \
+        virtual void initialize(GlobalObject&) override { }                       \
+        virtual ~PrototypeName() override;                                                      \
     };
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \

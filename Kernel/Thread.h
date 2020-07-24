@@ -39,6 +39,7 @@
 #include <Kernel/ThreadTracer.h>
 #include <Kernel/UnixTypes.h>
 #include <LibC/fd_set.h>
+#include <LibELF/AuxiliaryVector.h>
 
 namespace Kernel {
 
@@ -63,6 +64,8 @@ struct ThreadSpecificData {
 #define THREAD_PRIORITY_HIGH 50
 #define THREAD_PRIORITY_MAX 99
 
+#define THREAD_AFFINITY_DEFAULT 0xffffffff
+
 class Thread {
     AK_MAKE_NONCOPYABLE(Thread);
     AK_MAKE_NONMOVABLE(Thread);
@@ -71,13 +74,15 @@ class Thread {
     friend class Scheduler;
 
 public:
-    static Thread* current;
+    inline static Thread* current()
+    {
+        return Processor::current().current_thread();
+    }
 
     explicit Thread(Process&);
     ~Thread();
 
     static Thread* from_tid(int);
-    static void initialize();
     static void finalize_dying_threads();
 
     static Vector<Thread*> all_threads();
@@ -100,7 +105,7 @@ public:
     Process& process() { return m_process; }
     const Process& process() const { return m_process; }
 
-    String backtrace(ProcessInspectionHandle&) const;
+    String backtrace(ProcessInspectionHandle&);
     Vector<FlatPtr> raw_backtrace(FlatPtr ebp, FlatPtr eip) const;
 
     const String& name() const { return m_name; }
@@ -123,7 +128,7 @@ public:
 
     class Blocker {
     public:
-        virtual ~Blocker() {}
+        virtual ~Blocker() { }
         virtual bool should_unblock(Thread&, time_t now_s, long us) = 0;
         virtual const char* state_string() const = 0;
         virtual bool is_reason_signal() const { return false; }
@@ -219,12 +224,12 @@ public:
     class SelectBlocker final : public Blocker {
     public:
         typedef Vector<int, FD_SETSIZE> FDVector;
-        SelectBlocker(const timeval& tv, bool select_has_timeout, const FDVector& read_fds, const FDVector& write_fds, const FDVector& except_fds);
+        SelectBlocker(const timespec& ts, bool select_has_timeout, const FDVector& read_fds, const FDVector& write_fds, const FDVector& except_fds);
         virtual bool should_unblock(Thread&, time_t, long) override;
         virtual const char* state_string() const override { return "Selecting"; }
 
     private:
-        timeval m_select_timeout;
+        timespec m_select_timeout;
         bool m_select_has_timeout { false };
         const FDVector& m_select_read_fds;
         const FDVector& m_select_write_fds;
@@ -274,12 +279,15 @@ public:
 
     bool in_kernel() const { return (m_tss.cs & 0x03) == 0; }
 
-    u32 frame_ptr() const { return m_tss.ebp; }
+    u32 cpu() const { return m_cpu.load(AK::MemoryOrder::memory_order_consume); }
+    void set_cpu(u32 cpu) { m_cpu.store(cpu, AK::MemoryOrder::memory_order_release); }
+    u32 affinity() const { return m_cpu_affinity; }
+    void set_affinity(u32 affinity) { m_cpu_affinity = affinity; }
+
     u32 stack_ptr() const { return m_tss.esp; }
 
     RegisterState& get_register_dump_from_stack();
 
-    u16 selector() const { return m_far_ptr.selector; }
     TSS32& tss() { return m_tss; }
     const TSS32& tss() const { return m_tss; }
     State state() const { return m_state; }
@@ -287,15 +295,47 @@ public:
     u32 ticks() const { return m_ticks; }
 
     VirtualAddress thread_specific_data() const { return m_thread_specific_data; }
+    size_t thread_specific_region_size() const { return m_thread_specific_region_size; }
 
     u64 sleep(u64 ticks);
     u64 sleep_until(u64 wakeup_time);
 
-    enum class BlockResult {
-        WokeNormally,
-        InterruptedBySignal,
-        InterruptedByDeath,
-        InterruptedByTimeout,
+    class BlockResult {
+    public:
+        enum Type {
+            WokeNormally,
+            NotBlocked,
+            InterruptedBySignal,
+            InterruptedByDeath,
+            InterruptedByTimeout,
+        };
+
+        BlockResult() = delete;
+
+        BlockResult(Type type)
+            : m_type(type)
+        {
+        }
+
+        bool operator==(Type type) const
+        {
+            return m_type == type;
+        }
+
+        bool was_interrupted() const
+        {
+            switch (m_type) {
+            case InterruptedBySignal:
+            case InterruptedByDeath:
+            case InterruptedByTimeout:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+    private:
+        Type m_type;
     };
 
     template<typename T, class... Args>
@@ -332,7 +372,7 @@ public:
         return block<ConditionBlocker>(state_string, move(condition));
     }
 
-    BlockResult wait_on(WaitQueue& queue, timeval* timeout = nullptr, Atomic<bool>* lock = nullptr, Thread* beneficiary = nullptr, const char* reason = nullptr);
+    BlockResult wait_on(WaitQueue& queue, const char* reason, timeval* timeout = nullptr, Atomic<bool>* lock = nullptr, Thread* beneficiary = nullptr);
     void wake_from_queue();
 
     void unblock();
@@ -342,8 +382,6 @@ public:
     void set_should_die();
     void die_if_needed();
 
-    const FarPtr& far_ptr() const { return m_far_ptr; }
-
     bool tick();
     void set_ticks_left(u32 t) { m_ticks_left = t; }
     u32 ticks_left() const { return m_ticks_left; }
@@ -351,8 +389,10 @@ public:
     u32 kernel_stack_base() const { return m_kernel_stack_base; }
     u32 kernel_stack_top() const { return m_kernel_stack_top; }
 
-    void set_selector(u16 s) { m_far_ptr.selector = s; }
     void set_state(State);
+
+    bool is_initialized() const { return m_initialized; }
+    void set_initialized(bool initialized) { m_initialized = initialized; }
 
     void send_urgent_signal_to_self(u8 signal);
     void send_signal(u8 signal, Process* sender);
@@ -362,7 +402,7 @@ public:
 
     ShouldUnblockThread dispatch_one_pending_signal();
     ShouldUnblockThread dispatch_signal(u8 signal);
-    bool has_unmasked_pending_signals() const;
+    bool has_unmasked_pending_signals() const { return m_pending_signals & ~m_signal_mask; }
     void terminate_due_to_signal(u8 signal);
     bool should_ignore_signal(u8 signal) const;
     bool has_signal_handler(u8 signal) const;
@@ -373,7 +413,7 @@ public:
     void set_default_signal_dispositions();
     void push_value_on_stack(FlatPtr);
 
-    u32 make_userspace_stack_for_main_thread(Vector<String> arguments, Vector<String> environment);
+    u32 make_userspace_stack_for_main_thread(Vector<String> arguments, Vector<String> environment, Vector<AuxiliaryValue>);
 
     void make_thread_specific_region(Badge<Process>);
 
@@ -425,6 +465,23 @@ public:
         m_ipv4_socket_write_bytes += bytes;
     }
 
+    const char* wait_reason() const
+    {
+        return m_wait_reason;
+    }
+
+    void set_active(bool active)
+    {
+        ASSERT(g_scheduler_lock.is_locked());
+        m_is_active = active;
+    }
+
+    bool is_finalizable() const
+    {
+        ASSERT(g_scheduler_lock.is_locked());
+        return !m_is_active;
+    }
+
     Thread* clone(Process&);
 
     template<typename Callback>
@@ -455,14 +512,15 @@ private:
     friend class SchedulerData;
     friend class WaitQueue;
     bool unlock_process_if_locked();
-    void relock_process();
-    String backtrace_impl() const;
+    void relock_process(bool did_unlock);
+    String backtrace_impl();
     void reset_fpu_state();
 
     Process& m_process;
     int m_tid { -1 };
     TSS32 m_tss;
-    FarPtr m_far_ptr;
+    Atomic<u32> m_cpu { 0 };
+    u32 m_cpu_affinity { THREAD_AFFINITY_DEFAULT };
     u32 m_ticks { 0 };
     u32 m_ticks_left { 0 };
     u32 m_times_scheduled { 0 };
@@ -472,9 +530,12 @@ private:
     u32 m_kernel_stack_top { 0 };
     OwnPtr<Region> m_kernel_stack_region;
     VirtualAddress m_thread_specific_data;
+    size_t m_thread_specific_region_size { 0 };
     SignalActionData m_signal_action_data[32];
     Blocker* m_blocker { nullptr };
+    const char* m_wait_reason { nullptr };
 
+    bool m_is_active { false };
     bool m_is_joinable { true };
     Thread* m_joiner { nullptr };
     Thread* m_joinee { nullptr };
@@ -506,6 +567,7 @@ private:
 
     bool m_dump_backtrace_on_finalization { false };
     bool m_should_die { false };
+    bool m_initialized { false };
 
     OwnPtr<ThreadTracer> m_tracer;
 
@@ -529,6 +591,7 @@ template<typename Callback>
 inline IterationDecision Thread::for_each(Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ScopedSpinLock lock(g_scheduler_lock);
     auto ret = Scheduler::for_each_runnable(callback);
     if (ret == IterationDecision::Break)
         return ret;
@@ -539,6 +602,7 @@ template<typename Callback>
 inline IterationDecision Thread::for_each_in_state(State state, Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ScopedSpinLock lock(g_scheduler_lock);
     auto new_callback = [=](Thread& thread) -> IterationDecision {
         if (thread.state() == state)
             return callback(thread);
@@ -569,6 +633,7 @@ template<typename Callback>
 inline IterationDecision Scheduler::for_each_runnable(Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ASSERT(g_scheduler_lock.is_locked());
     auto& tl = g_scheduler_data->m_runnable_threads;
     for (auto it = tl.begin(); it != tl.end();) {
         auto& thread = *it;
@@ -584,6 +649,7 @@ template<typename Callback>
 inline IterationDecision Scheduler::for_each_nonrunnable(Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ASSERT(g_scheduler_lock.is_locked());
     auto& tl = g_scheduler_data->m_nonrunnable_threads;
     for (auto it = tl.begin(); it != tl.end();) {
         auto& thread = *it;
@@ -594,8 +660,5 @@ inline IterationDecision Scheduler::for_each_nonrunnable(Callback callback)
 
     return IterationDecision::Continue;
 }
-
-u16 thread_specific_selector();
-Descriptor& thread_specific_descriptor();
 
 }

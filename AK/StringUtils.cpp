@@ -25,6 +25,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/Memory.h>
+#include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/StringUtils.h>
 #include <AK/StringView.h>
@@ -86,60 +88,74 @@ bool matches(const StringView& str, const StringView& mask, CaseSensitivity case
     return (mask_ptr == mask_end) && string_ptr == string_end;
 }
 
-int convert_to_int(const StringView& str, bool& ok)
+Optional<int> convert_to_int(const StringView& str)
 {
-    if (str.is_empty()) {
-        ok = false;
-        return 0;
-    }
+    if (str.is_empty())
+        return {};
 
     bool negative = false;
     size_t i = 0;
     const auto characters = str.characters_without_null_termination();
 
     if (characters[0] == '-' || characters[0] == '+') {
-        if (str.length() == 1) {
-            ok = false;
-            return 0;
-        }
+        if (str.length() == 1)
+            return {};
         i++;
         negative = (characters[0] == '-');
     }
 
     int value = 0;
     for (; i < str.length(); i++) {
-        if (characters[i] < '0' || characters[i] > '9') {
-            ok = false;
-            return 0;
-        }
+        if (characters[i] < '0' || characters[i] > '9')
+            return {};
         value = value * 10;
         value += characters[i] - '0';
     }
-    ok = true;
-
     return negative ? -value : value;
 }
 
-unsigned convert_to_uint(const StringView& str, bool& ok)
+Optional<unsigned> convert_to_uint(const StringView& str)
 {
-    if (str.is_empty()) {
-        ok = false;
-        return 0;
-    }
+    if (str.is_empty())
+        return {};
 
     unsigned value = 0;
     const auto characters = str.characters_without_null_termination();
 
     for (size_t i = 0; i < str.length(); i++) {
-        if (characters[i] < '0' || characters[i] > '9') {
-            ok = false;
-            return 0;
-        }
+        if (characters[i] < '0' || characters[i] > '9')
+            return {};
+
         value = value * 10;
         value += characters[i] - '0';
     }
-    ok = true;
+    return value;
+}
 
+Optional<unsigned> convert_to_uint_from_hex(const StringView& str)
+{
+    if (str.is_empty())
+        return {};
+
+    unsigned value = 0;
+    const auto count = str.length();
+
+    for (size_t i = 0; i < count; i++) {
+        char digit = str[i];
+        u8 digit_val;
+
+        if (digit >= '0' && digit <= '9') {
+            digit_val = digit - '0';
+        } else if (digit >= 'a' && digit <= 'f') {
+            digit_val = 10 + (digit - 'a');
+        } else if (digit >= 'A' && digit <= 'F') {
+            digit_val = 10 + (digit - 'A');
+        } else {
+            return {};
+        }
+
+        value = (value << 4) + digit_val;
+    }
     return value;
 }
 
@@ -158,6 +174,54 @@ bool equals_ignoring_case(const StringView& a, const StringView& b)
         return false;
     for (size_t i = 0; i < a.length(); ++i) {
         if (to_lowercase(a.characters_without_null_termination()[i]) != to_lowercase(b.characters_without_null_termination()[i]))
+            return false;
+    }
+    return true;
+}
+
+bool ends_with(const StringView& str, const StringView& end, CaseSensitivity case_sensitivity)
+{
+    if (end.is_empty())
+        return true;
+    if (str.is_empty())
+        return false;
+    if (end.length() > str.length())
+        return false;
+
+    if (case_sensitivity == CaseSensitivity::CaseSensitive)
+        return !memcmp(str.characters_without_null_termination() + (str.length() - end.length()), end.characters_without_null_termination(), end.length());
+
+    auto str_chars = str.characters_without_null_termination();
+    auto end_chars = end.characters_without_null_termination();
+
+    size_t si = str.length() - end.length();
+    for (size_t ei = 0; ei < end.length(); ++si, ++ei) {
+        if (to_lowercase(str_chars[si]) != to_lowercase(end_chars[ei]))
+            return false;
+    }
+    return true;
+}
+
+bool starts_with(const StringView& str, const StringView& start, CaseSensitivity case_sensitivity)
+{
+    if (start.is_empty())
+        return true;
+    if (str.is_empty())
+        return false;
+    if (start.length() > str.length())
+        return false;
+    if (str.characters_without_null_termination() == start.characters_without_null_termination())
+        return true;
+
+    if (case_sensitivity == CaseSensitivity::CaseSensitive)
+        return !memcmp(str.characters_without_null_termination(), start.characters_without_null_termination(), start.length());
+
+    auto str_chars = str.characters_without_null_termination();
+    auto start_chars = start.characters_without_null_termination();
+
+    size_t si = 0;
+    for (size_t starti = 0; starti < start.length(); ++si, ++starti) {
+        if (to_lowercase(str_chars[si]) != to_lowercase(start_chars[starti]))
             return false;
     }
     return true;

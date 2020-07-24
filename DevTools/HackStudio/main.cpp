@@ -71,6 +71,7 @@
 #include <LibThread/Lock.h>
 #include <LibThread/Thread.h>
 #include <LibVT/TerminalWidget.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -159,7 +160,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio tty accept rpath cpath wpath shared_buffer proc exec fattr thread", nullptr) < 0) {
         perror("pledge");
@@ -186,7 +187,7 @@ int main(int argc, char** argv)
     setenv("PATH", path.to_string().characters(), true);
 
     if (!make_is_available())
-        GUI::MessageBox::show("The 'make' command is not available. You probably want to install the binutils, gcc, and make ports from the root of the Serenity repository.", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+        GUI::MessageBox::show(g_window, "The 'make' command is not available. You probably want to install the binutils, gcc, and make ports from the root of the Serenity repository.", "Error", GUI::MessageBox::Type::Error);
 
     open_project("/home/anon/little/little.files");
 
@@ -202,17 +203,16 @@ int main(int argc, char** argv)
     };
 
     auto new_action = GUI::Action::create("Add new file to project...", { Mod_Ctrl, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/new.png"), [&](const GUI::Action&) {
-        auto input_box = GUI::InputBox::construct("Enter name of new file:", "Add new file to project", g_window);
-        if (input_box->exec() == GUI::InputBox::ExecCancel)
+        String filename;
+        if (GUI::InputBox::show(filename, g_window, "Enter name of new file:", "Add new file to project") != GUI::InputBox::ExecOK)
             return;
-        auto filename = input_box->text_value();
         auto file = Core::File::construct(filename);
         if (!file->open((Core::IODevice::OpenMode)(Core::IODevice::WriteOnly | Core::IODevice::MustBeNew))) {
-            GUI::MessageBox::show(String::format("Failed to create '%s'", filename.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, String::format("Failed to create '%s'", filename.characters()), "Error", GUI::MessageBox::Type::Error);
             return;
         }
         if (!g_project->add_file(filename)) {
-            GUI::MessageBox::show(String::format("Failed to add '%s' to project", filename.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, String::format("Failed to add '%s' to project", filename.characters()), "Error", GUI::MessageBox::Type::Error);
             // FIXME: Should we unlink the file here maybe?
             return;
         }
@@ -221,12 +221,12 @@ int main(int argc, char** argv)
     });
 
     auto add_existing_file_action = GUI::Action::create("Add existing file to project...", Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"), [&](auto&) {
-        auto result = GUI::FilePicker::get_open_filepath("Add existing file to project");
+        auto result = GUI::FilePicker::get_open_filepath(g_window, "Add existing file to project");
         if (!result.has_value())
             return;
         auto& filename = result.value();
         if (!g_project->add_file(filename)) {
-            GUI::MessageBox::show(String::format("Failed to add '%s' to project", filename.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, String::format("Failed to add '%s' to project", filename.characters()), "Error", GUI::MessageBox::Type::Error);
             return;
         }
         g_project_tree_view->toggle_index(g_project_tree_view->model()->index(0, 0));
@@ -242,28 +242,25 @@ int main(int argc, char** argv)
 
         String message;
         if (files.size() == 1) {
-            message = String::format("Really remove %s from the project?", FileSystemPath(files[0]).basename().characters());
+            message = String::format("Really remove %s from the project?", LexicalPath(files[0]).basename().characters());
         } else {
             message = String::format("Really remove %d files from the project?", files.size());
         }
 
-        auto result = GUI::MessageBox::show(
+        auto result = GUI::MessageBox::show(g_window,
             message,
             "Confirm deletion",
             GUI::MessageBox::Type::Warning,
-            GUI::MessageBox::InputType::OKCancel,
-            g_window);
+            GUI::MessageBox::InputType::OKCancel);
         if (result == GUI::MessageBox::ExecCancel)
             return;
 
         for (auto& file : files) {
             if (!g_project->remove_file(file)) {
-                GUI::MessageBox::show(
+                GUI::MessageBox::show(g_window,
                     String::format("Removing file %s from the project failed.", file.characters()),
                     "Removal failed",
-                    GUI::MessageBox::Type::Error,
-                    GUI::MessageBox::InputType::OK,
-                    g_window);
+                    GUI::MessageBox::Type::Error);
                 break;
             }
         }
@@ -424,7 +421,7 @@ int main(int argc, char** argv)
     });
 
     auto open_action = GUI::Action::create("Open project...", { Mod_Ctrl | Mod_Shift, Key_O }, Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"), [&](auto&) {
-        auto open_path = GUI::FilePicker::get_open_filepath("Open project");
+        auto open_path = GUI::FilePicker::get_open_filepath(g_window, "Open project");
         if (!open_path.has_value())
             return;
         open_project(open_path.value());
@@ -479,7 +476,7 @@ int main(int argc, char** argv)
     });
 
     auto add_editor_action = GUI::Action::create("Add new editor", { Mod_Ctrl | Mod_Alt, Key_E },
-        Gfx::Bitmap::load_from_file("/res/icons/TextEditor16.png"),
+        Gfx::Bitmap::load_from_file("/res/icons/16x16/app-text-editor.png"),
         [&](auto&) {
             add_new_editor(*g_text_inner_splitter);
             update_actions();
@@ -524,7 +521,7 @@ int main(int argc, char** argv)
     app_menu.add_action(save_action);
     app_menu.add_separator();
     app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
-        app.quit();
+        app->quit();
     }));
 
     auto& project_menu = menubar->add_menu("Project");
@@ -563,15 +560,15 @@ int main(int argc, char** argv)
     RefPtr<LibThread::Thread> debugger_thread;
     auto debug_action = GUI::Action::create("Debug", Gfx::Bitmap::load_from_file("/res/icons/16x16/debug-run.png"), [&](auto&) {
         if (g_project->type() != ProjectType::Cpp) {
-            GUI::MessageBox::show(String::format("Cannot debug current project type", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, String::format("Cannot debug current project type", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error);
             return;
         }
         if (!GUI::FilePicker::file_exists(get_project_executable_path())) {
-            GUI::MessageBox::show(String::format("Could not find file: %s. (did you build the project?)", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, String::format("Could not find file: %s. (did you build the project?)", get_project_executable_path().characters()), "Error", GUI::MessageBox::Type::Error);
             return;
         }
         if (Debugger::the().session()) {
-            GUI::MessageBox::show("Debugger is already running", "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, g_window);
+            GUI::MessageBox::show(g_window, "Debugger is already running", "Error", GUI::MessageBox::Type::Error);
             return;
         }
         Debugger::the().set_executable_path(get_project_executable_path());
@@ -636,7 +633,7 @@ int main(int argc, char** argv)
             debug_info_widget.program_stopped();
             hide_action_tabs();
             Core::EventLoop::main().post_event(*g_window, make<Core::DeferredInvocationEvent>([=](auto&) {
-                GUI::MessageBox::show("Program Exited", "Debugger", GUI::MessageBox::Type::Information, GUI::MessageBox::InputType::OK, g_window);
+                GUI::MessageBox::show(g_window, "Program Exited", "Debugger", GUI::MessageBox::Type::Information);
             }));
             Core::EventLoop::wake();
         });
@@ -663,7 +660,7 @@ int main(int argc, char** argv)
         GUI::AboutDialog::show("HackStudio", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-hack-studio.png"), g_window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     g_window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-hack-studio.png"));
 
@@ -690,7 +687,7 @@ int main(int argc, char** argv)
     open_file(g_project->default_file());
 
     update_actions();
-    return app.exec();
+    return app->exec();
 }
 
 void build(TerminalWrapper& wrapper)
@@ -711,8 +708,8 @@ void run(TerminalWrapper& wrapper)
 
 void open_project(String filename)
 {
-    FileSystemPath path(filename);
-    if (chdir(path.dirname().characters()) < 0) {
+    LexicalPath lexical_path(filename);
+    if (chdir(lexical_path.dirname().characters()) < 0) {
         perror("chdir");
         exit(1);
     }
@@ -733,11 +730,11 @@ void open_file(const String& filename)
     auto project_file = g_project->get_file(filename);
     if (project_file) {
         current_editor().set_document(const_cast<GUI::TextDocument&>(project_file->document()));
-        current_editor().set_readonly(false);
+        current_editor().set_mode(GUI::TextEditor::Editable);
     } else {
         auto external_file = ProjectFile::construct_with_name(filename);
         current_editor().set_document(const_cast<GUI::TextDocument&>(external_file->document()));
-        current_editor().set_readonly(true);
+        current_editor().set_mode(GUI::TextEditor::ReadOnly);
     }
 
     if (filename.ends_with(".cpp") || filename.ends_with(".h"))
@@ -766,15 +763,11 @@ void open_file(const String& filename)
 
 bool make_is_available()
 {
-    auto pid = fork();
-    if (pid < 0)
+    pid_t pid;
+    const char* argv[] = { "make", "--version", nullptr };
+    if ((errno = posix_spawnp(&pid, "make", nullptr, nullptr, const_cast<char**>(argv), environ))) {
+        perror("posix_spawn");
         return false;
-
-    if (!pid) {
-        int rc = execlp("make", "make", "--version", nullptr);
-        ASSERT(rc < 0);
-        perror("execl");
-        exit(127);
     }
 
     int wstatus;

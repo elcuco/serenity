@@ -37,7 +37,7 @@ Function::Function(Object& prototype)
 }
 
 Function::Function(Object& prototype, Value bound_this, Vector<Value> bound_arguments)
-    : Object(&prototype)
+    : Object(prototype)
     , m_bound_this(bound_this)
     , m_bound_arguments(move(bound_arguments))
 {
@@ -57,10 +57,11 @@ BoundFunction* Function::bind(Value bound_this_value, Vector<Value> arguments)
         switch (bound_this_value.type()) {
         case Value::Type::Undefined:
         case Value::Type::Null:
-            // FIXME: Null or undefined should be passed through in strict mode.
-            return &interpreter().global_object();
+            if (interpreter().in_strict_mode())
+                return bound_this_value;
+            return &global_object();
         default:
-            return bound_this_value.to_object(interpreter().heap());
+            return bound_this_value.to_object(interpreter(), global_object());
         }
     }();
 
@@ -69,7 +70,7 @@ BoundFunction* Function::bind(Value bound_this_value, Vector<Value> arguments)
     if (interpreter().exception())
         return nullptr;
     if (length_property.is_number())
-        computed_length = max(0, length_property.to_i32() - static_cast<i32>(arguments.size()));
+        computed_length = max(0, length_property.as_i32() - static_cast<i32>(arguments.size()));
 
     Object* constructor_prototype = nullptr;
     auto prototype_property = target_function.get("prototype");
@@ -81,7 +82,7 @@ BoundFunction* Function::bind(Value bound_this_value, Vector<Value> arguments)
     auto all_bound_arguments = bound_arguments();
     all_bound_arguments.append(move(arguments));
 
-    return interpreter().heap().allocate<BoundFunction>(target_function, bound_this_object, move(all_bound_arguments), computed_length, constructor_prototype);
+    return interpreter().heap().allocate<BoundFunction>(global_object(), global_object(), target_function, bound_this_object, move(all_bound_arguments), computed_length, constructor_prototype);
 }
 
 void Function::visit_children(Visitor& visitor)

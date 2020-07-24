@@ -72,7 +72,7 @@ int execlp(const char* filename, const char* arg, ...);
 int chroot(const char* path);
 int chroot_with_mount_flags(const char* path, int mount_flags);
 void sync();
-void _exit(int status);
+__attribute__((noreturn)) void _exit(int status);
 pid_t getsid(pid_t);
 pid_t setsid();
 int setpgid(pid_t pid, pid_t pgid);
@@ -84,10 +84,16 @@ uid_t getuid();
 gid_t getgid();
 pid_t getpid();
 pid_t getppid();
+int getresuid(uid_t*, uid_t*, uid_t*);
+int getresgid(gid_t*, gid_t*, gid_t*);
 int getgroups(int size, gid_t list[]);
 int setgroups(size_t, const gid_t*);
+int seteuid(uid_t);
+int setegid(gid_t);
 int setuid(uid_t);
 int setgid(gid_t);
+int setresuid(uid_t, uid_t, uid_t);
+int setresgid(gid_t, gid_t, gid_t);
 pid_t tcgetpgrp(int fd);
 int tcsetpgrp(int fd, pid_t pgid);
 ssize_t read(int fd, void* buf, size_t count);
@@ -113,7 +119,6 @@ int link(const char* oldpath, const char* newpath);
 int unlink(const char* pathname);
 int symlink(const char* target, const char* linkpath);
 int rmdir(const char* pathname);
-int getdtablesize();
 int dup(int old_fd);
 int dup2(int old_fd, int new_fd);
 int pipe(int pipefd[2]);
@@ -128,6 +133,7 @@ char* getlogin();
 int chown(const char* pathname, uid_t, gid_t);
 int fchown(int fd, uid_t, gid_t);
 int ftruncate(int fd, off_t length);
+int truncate(const char* path, off_t length);
 int halt();
 int reboot();
 int mount(int source_fd, const char* target, const char* fs_type, int flags);
@@ -150,10 +156,14 @@ enum {
 #define X_OK 1
 #define F_OK 0
 
-#define MS_NODEV 1
-#define MS_NOEXEC 2
-#define MS_NOSUID 4
-#define MS_BIND 8
+#define MS_NODEV (1 << 0)
+#define MS_NOEXEC (1 << 1)
+#define MS_NOSUID (1 << 2)
+#define MS_BIND (1 << 3)
+#define MS_RDONLY (1 << 4)
+#define MS_REMOUNT (1 << 5)
+
+#define _POSIX_SAVED_IDS
 
 /*
  * We aren't fully compliant (don't support policies, and don't have a wide
@@ -161,5 +171,11 @@ enum {
  */
 #define _POSIX_PRIORITY_SCHEDULING
 #define _POSIX_VDISABLE '\0'
+
+enum {
+    _SC_NPROCESSORS_CONF,
+    _SC_NPROCESSORS_ONLN,
+};
+long sysconf(int name);
 
 __END_DECLS

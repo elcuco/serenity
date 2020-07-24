@@ -26,7 +26,7 @@
 
 #include <AK/BufferStream.h>
 #include <AK/ByteBuffer.h>
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
 #include <AK/MappedFile.h>
 #include <AK/NonnullOwnPtrVector.h>
 #include <LibGfx/GIFLoader.h>
@@ -99,7 +99,7 @@ RefPtr<Gfx::Bitmap> load_gif(const StringView& path)
     GIFImageDecoderPlugin gif_decoder((const u8*)mapped_file.data(), mapped_file.size());
     auto bitmap = gif_decoder.bitmap();
     if (bitmap)
-        bitmap->set_mmap_name(String::format("Gfx::Bitmap [%dx%d] - Decoded GIF: %s", bitmap->width(), bitmap->height(), canonicalized_path(path).characters()));
+        bitmap->set_mmap_name(String::format("Gfx::Bitmap [%dx%d] - Decoded GIF: %s", bitmap->width(), bitmap->height(), LexicalPath::canonicalized_path(path).characters()));
     return bitmap;
 }
 
@@ -294,6 +294,11 @@ bool decode_frames_up_to_index(GIFLoadingContext& context, size_t frame_index)
         }
 
         int pixel_index = 0;
+        RGB transparent_color { 0, 0, 0 };
+        if (image.transparent) {
+            transparent_color = context.logical_screen.color_map[image.transparency_index];
+        }
+
         while (true) {
             Optional<u16> code = decoder.next_code();
             if (!code.has_value()) {
@@ -311,15 +316,20 @@ bool decode_frames_up_to_index(GIFLoadingContext& context, size_t frame_index)
             auto colors = decoder.get_output();
 
             for (const auto& color : colors) {
-                if (!image.transparent || color != image.transparency_index) {
-                    auto rgb = context.logical_screen.color_map[color];
+                auto rgb = context.logical_screen.color_map[color];
 
-                    int x = pixel_index % image.width + image.x;
-                    int y = pixel_index / image.width + image.y;
+                int x = pixel_index % image.width + image.x;
+                int y = pixel_index / image.width + image.y;
 
-                    Color c = Color(rgb.r, rgb.g, rgb.b);
-                    image.bitmap->set_pixel(x, y, c);
+                Color c = Color(rgb.r, rgb.g, rgb.b);
+
+                if (image.transparent) {
+                    if (rgb.r == transparent_color.r && rgb.g == transparent_color.g && rgb.b == transparent_color.b) {
+                        c.set_alpha(0);
+                    }
                 }
+
+                image.bitmap->set_pixel(x, y, c);
                 ++pixel_index;
             }
         }
@@ -422,7 +432,7 @@ bool load_gif_frame_descriptors(GIFLoadingContext& context)
                 if (sub_block_length == 0)
                     break;
 
-                u8 dummy;
+                u8 dummy = 0;
                 for (u16 i = 0; i < sub_block_length; ++i) {
                     stream >> dummy;
                     sub_block.append(dummy);
@@ -538,7 +548,7 @@ GIFImageDecoderPlugin::GIFImageDecoderPlugin(const u8* data, size_t size)
 
 GIFImageDecoderPlugin::~GIFImageDecoderPlugin() {}
 
-Size GIFImageDecoderPlugin::size()
+IntSize GIFImageDecoderPlugin::size()
 {
     if (m_context->state == GIFLoadingContext::State::Error) {
         return {};

@@ -31,6 +31,7 @@
 #include <AK/StringBuilder.h>
 #include <AK/kmalloc.h>
 #include <LibC/sys/arch/i386/regs.h>
+#include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibDebug/DebugInfo.h>
 #include <LibDebug/DebugSession.h>
@@ -43,13 +44,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static Line::Editor editor {};
-
-static int usage()
-{
-    printf("usage: sdb [command...]\n");
-    return 1;
-}
+RefPtr<Line::Editor> editor;
 
 OwnPtr<DebugSession> g_debug_session;
 
@@ -81,10 +76,10 @@ bool handle_disassemble_command(const String& command, void* first_instruction)
     auto parts = command.split(' ');
     size_t number_of_instructions_to_disassemble = 5;
     if (parts.size() == 2) {
-        bool ok;
-        number_of_instructions_to_disassemble = parts[1].to_uint(ok);
-        if (!ok)
+        auto number = parts[1].to_uint();
+        if (!number.has_value())
             return false;
+        number_of_instructions_to_disassemble = number.value();
     }
 
     // FIXME: Instead of using a fixed "dump_size",
@@ -131,14 +126,13 @@ bool handle_breakpoint_command(const String& command)
         auto source_arguments = argument.split(':');
         if (source_arguments.size() != 2)
             return false;
-        bool ok = false;
-        size_t line = source_arguments[1].to_uint(ok);
-        if (!ok)
+        auto line = source_arguments[1].to_uint();
+        if (!line.has_value())
             return false;
         auto file = source_arguments[0];
         if (!file.contains("/"))
             file = String::format("./%s", file.characters());
-        auto result = g_debug_session->debug_info().get_instruction_from_source(file, line);
+        auto result = g_debug_session->debug_info().get_instruction_from_source(file, line.value());
         if (!result.has_value()) {
             printf("No matching instruction found\n");
             return false;
@@ -178,23 +172,23 @@ void print_help()
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio proc exec rpath tty", nullptr) < 0) {
+    editor = Line::Editor::construct();
+
+    if (pledge("stdio proc exec rpath tty sigaction cpath unix fattr", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    if (argc == 1)
-        return usage();
+    const char* command = nullptr;
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(command,
+        "The program to be debugged, along with its arguments",
+        "program", Core::ArgsParser::Required::Yes);
+    args_parser.parse(argc, argv);
 
-    StringBuilder command;
-    command.append(argv[1]);
-    for (int i = 2; i < argc; ++i) {
-        command.appendf("%s ", argv[i]);
-    }
-
-    auto result = DebugSession::exec_and_attach(command.to_string());
+    auto result = DebugSession::exec_and_attach(command);
     if (!result) {
-        fprintf(stderr, "Failed to start debugging session for: \"%s\"\n", command.to_string().characters());
+        fprintf(stderr, "Failed to start debugging session for: \"%s\"\n", command);
         exit(1);
     }
     g_debug_session = result.release_nonnull();
@@ -243,12 +237,18 @@ int main(int argc, char** argv)
         }
 
         for (;;) {
-            auto command = editor.get_line("(sdb) ");
+            auto command_result = editor->get_line("(sdb) ");
+
+            if (command_result.is_error())
+                return DebugSession::DebugDecision::Detach;
+
+            auto& command = command_result.value();
+
             bool success = false;
             Optional<DebugSession::DebugDecision> decision;
 
-            if (command.is_empty() && !editor.history().is_empty()) {
-                command = editor.history().last();
+            if (command.is_empty() && !editor->history().is_empty()) {
+                command = editor->history().last();
             }
             if (command == "cont") {
                 decision = DebugSession::DebugDecision::Continue;
@@ -277,8 +277,8 @@ int main(int argc, char** argv)
 
             if (success && !command.is_empty()) {
                 // Don't add repeated commands to history
-                if (editor.history().is_empty() || editor.history().last() != command)
-                    editor.add_to_history(command);
+                if (editor->history().is_empty() || editor->history().last() != command)
+                    editor->add_to_history(command);
             }
             if (!success) {
                 print_help();

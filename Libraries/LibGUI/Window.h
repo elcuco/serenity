@@ -46,7 +46,13 @@ enum class StandardCursor {
     ResizeVertical,
     ResizeDiagonalTLBR,
     ResizeDiagonalBLTR,
+    ResizeColumn,
+    ResizeRow,
     Hand,
+    Help,
+    Drag,
+    Move,
+    Wait,
 };
 
 class Window : public Core::Object {
@@ -61,6 +67,8 @@ public:
 
     bool is_fullscreen() const { return m_fullscreen; }
     void set_fullscreen(bool);
+
+    bool is_maximized() const;
 
     bool is_frameless() const { return m_frameless; }
     void set_frameless(bool frameless) { m_frameless = frameless; }
@@ -90,29 +98,35 @@ public:
     };
 
     Function<CloseRequestDecision()> on_close_request;
+    Function<void(bool is_active_input)> on_active_input_change;
+    Function<void(const bool is_active)> on_activity_change;
 
     int x() const { return rect().x(); }
     int y() const { return rect().y(); }
     int width() const { return rect().width(); }
     int height() const { return rect().height(); }
 
-    Gfx::Rect rect() const;
-    Gfx::Size size() const { return rect().size(); }
-    void set_rect(const Gfx::Rect&);
+    Gfx::IntRect rect() const;
+    Gfx::IntSize size() const { return rect().size(); }
+    void set_rect(const Gfx::IntRect&);
     void set_rect(int x, int y, int width, int height) { set_rect({ x, y, width, height }); }
 
-    Gfx::Point position() const { return rect().location(); }
+    Gfx::IntPoint position() const { return rect().location(); }
 
     void move_to(int x, int y) { move_to({ x, y }); }
-    void move_to(const Gfx::Point& point) { set_rect({ point, size() }); }
+    void move_to(const Gfx::IntPoint& point) { set_rect({ point, size() }); }
 
     void resize(int width, int height) { resize({ width, height }); }
-    void resize(const Gfx::Size& size) { set_rect({ position(), size }); }
+    void resize(const Gfx::IntSize& size) { set_rect({ position(), size }); }
 
     virtual void event(Core::Event&) override;
 
     bool is_visible() const;
     bool is_active() const { return m_is_active; }
+    bool is_active_input() const { return m_is_active_input; }
+
+    bool is_accessory() const { return m_accessory; }
+    void set_accessory(bool accessory) { m_accessory = accessory; }
 
     void show();
     void hide();
@@ -138,7 +152,7 @@ public:
     void set_focused_widget(Widget*);
 
     void update();
-    void update(const Gfx::Rect&);
+    void update(const Gfx::IntRect&);
 
     void set_global_cursor_tracking_widget(Widget*);
     Widget* global_cursor_tracking_widget() { return m_global_cursor_tracking_widget.ptr(); }
@@ -155,12 +169,13 @@ public:
     Gfx::Bitmap* front_bitmap() { return m_front_bitmap.ptr(); }
     Gfx::Bitmap* back_bitmap() { return m_back_bitmap.ptr(); }
 
-    Gfx::Size size_increment() const { return m_size_increment; }
-    void set_size_increment(const Gfx::Size&);
-    Gfx::Size base_size() const { return m_base_size; }
-    void set_base_size(const Gfx::Size&);
+    Gfx::IntSize size_increment() const { return m_size_increment; }
+    void set_size_increment(const Gfx::IntSize&);
+    Gfx::IntSize base_size() const { return m_base_size; }
+    void set_base_size(const Gfx::IntSize&);
 
     void set_override_cursor(StandardCursor);
+    void set_override_cursor(const Gfx::Bitmap&);
 
     void set_icon(const Gfx::Bitmap*);
     void apply_icon();
@@ -180,9 +195,12 @@ public:
 
     Action* action_for_key_event(const KeyEvent&);
 
-    void did_remove_widget(Badge<Widget>, const Widget&);
+    void did_add_widget(Badge<Widget>, Widget&);
+    void did_remove_widget(Badge<Widget>, Widget&);
 
     Window* find_parent_window();
+
+    void set_progress(int);
 
 protected:
     Window(Core::Object* parent = nullptr);
@@ -191,17 +209,30 @@ protected:
 private:
     virtual bool is_window() const override final { return true; }
 
+    void handle_drop_event(DropEvent&);
+    void handle_mouse_event(MouseEvent&);
+    void handle_multi_paint_event(MultiPaintEvent&);
+    void handle_key_event(KeyEvent&);
+    void handle_resize_event(ResizeEvent&);
+    void handle_input_entered_or_left_event(Core::Event&);
+    void handle_became_active_or_inactive_event(Core::Event&);
+    void handle_close_request();
+    void handle_theme_change_event(ThemeChangeEvent&);
+    void handle_drag_move_event(DragEvent&);
+    void handle_left_event();
+
     void server_did_destroy();
 
-    RefPtr<Gfx::Bitmap> create_backing_bitmap(const Gfx::Size&);
-    RefPtr<Gfx::Bitmap> create_shared_bitmap(Gfx::BitmapFormat, const Gfx::Size&);
+    RefPtr<Gfx::Bitmap> create_backing_bitmap(const Gfx::IntSize&);
+    RefPtr<Gfx::Bitmap> create_shared_bitmap(Gfx::BitmapFormat, const Gfx::IntSize&);
     void set_current_backing_bitmap(Gfx::Bitmap&, bool flush_immediately = false);
-    void flip(const Vector<Gfx::Rect, 32>& dirty_rects);
+    void flip(const Vector<Gfx::IntRect, 32>& dirty_rects);
     void force_update();
 
     RefPtr<Gfx::Bitmap> m_front_bitmap;
     RefPtr<Gfx::Bitmap> m_back_bitmap;
     RefPtr<Gfx::Bitmap> m_icon;
+    RefPtr<Gfx::Bitmap> m_custom_cursor;
     int m_window_id { 0 };
     float m_opacity_when_windowless { 1.0f };
     RefPtr<Widget> m_main_widget;
@@ -209,15 +240,16 @@ private:
     WeakPtr<Widget> m_global_cursor_tracking_widget;
     WeakPtr<Widget> m_automatic_cursor_tracking_widget;
     WeakPtr<Widget> m_hovered_widget;
-    Gfx::Rect m_rect_when_windowless;
+    Gfx::IntRect m_rect_when_windowless;
     String m_title_when_windowless;
-    Vector<Gfx::Rect, 32> m_pending_paint_event_rects;
-    Gfx::Size m_size_increment;
-    Gfx::Size m_base_size;
+    Vector<Gfx::IntRect, 32> m_pending_paint_event_rects;
+    Gfx::IntSize m_size_increment;
+    Gfx::IntSize m_base_size;
     Color m_background_color { Color::WarmGray };
     WindowType m_window_type { WindowType::Normal };
     StandardCursor m_override_cursor { StandardCursor::None };
     bool m_is_active { false };
+    bool m_is_active_input { false };
     bool m_has_alpha_channel { false };
     bool m_double_buffering_enabled { true };
     bool m_modal { false };
@@ -228,6 +260,7 @@ private:
     bool m_layout_pending { false };
     bool m_visible_for_timer_purposes { true };
     bool m_visible { false };
+    bool m_accessory { false };
 };
 
 }

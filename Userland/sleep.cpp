@@ -25,6 +25,7 @@
  */
 
 #include <AK/Optional.h>
+#include <LibCore/ArgsParser.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,10 +69,11 @@ double parse_amount(char* arg, bool& ok) {
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
+    int secs;
+
+    Core::ArgsParser args_parser;
+    args_parser.add_positional_argument(secs, "Number of seconds to sleep for", "num-seconds");
+    args_parser.parse(argc, argv);
 
     if (argc != 2) {
         printf("Usage:\n        sleep <seconds>\n");
@@ -99,6 +101,11 @@ int main(int argc, char** argv)
     memset(&sa, 0, sizeof(struct sigaction));
     sa.sa_handler = handle_sigint;
     sigaction(SIGINT, &sa, nullptr);
+
+    if (pledge("stdio", nullptr) < 0) {
+        perror("pledge");
+        return 1;
+    }
 
     timespec requested_sleep;
     if (secs > MAX_SLEEPABLE) {

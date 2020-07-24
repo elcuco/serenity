@@ -29,6 +29,7 @@
 #include <AK/InlineLinkedList.h>
 #include <AK/String.h>
 #include <AK/Weakable.h>
+#include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/VM/RangeAllocator.h>
 #include <Kernel/VM/VMObject.h>
@@ -95,6 +96,9 @@ public:
     bool is_user_accessible() const { return m_user_accessible; }
     void set_user_accessible(bool b) { m_user_accessible = b; }
 
+    bool is_kernel() const { return m_kernel || vaddr().get() >= 0xc0000000; }
+    void set_kernel(bool kernel) { m_kernel = kernel; }
+
     PageFaultResponse handle_fault(const PageFault&);
 
     NonnullOwnPtr<Region> clone();
@@ -112,6 +116,11 @@ public:
     unsigned page_index_from_address(VirtualAddress vaddr) const
     {
         return (vaddr - m_range.base()).get() / PAGE_SIZE;
+    }
+    
+    VirtualAddress vaddr_from_page_index(size_t page_index) const
+    {
+        return vaddr().offset(page_index * PAGE_SIZE);
     }
 
     size_t first_page_index() const
@@ -147,7 +156,6 @@ public:
     }
 
     bool commit();
-    bool commit(size_t page_index);
 
     size_t amount_resident() const;
     size_t amount_shared() const;
@@ -171,14 +179,13 @@ public:
     void unmap(ShouldDeallocateVirtualMemoryRange = ShouldDeallocateVirtualMemoryRange::Yes);
 
     void remap();
-    void remap_page(size_t index);
 
     // For InlineLinkedListNode
     Region* m_next { nullptr };
     Region* m_prev { nullptr };
 
     // NOTE: These are public so we can make<> them.
-    Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, const String&, u8 access, bool cacheable);
+    Region(const Range&, NonnullRefPtr<VMObject>, size_t offset_in_vmobject, const String&, u8 access, bool cacheable, bool kernel);
 
     void set_inherit_mode(InheritMode inherit_mode) { m_inherit_mode = inherit_mode; }
 
@@ -192,6 +199,9 @@ private:
         else
             m_access &= ~access;
     }
+
+    bool commit(size_t page_index);
+    void remap_page(size_t index, bool with_flush = true);
 
     PageFaultResponse handle_cow_fault(size_t page_index);
     PageFaultResponse handle_inode_fault(size_t page_index);
@@ -211,6 +221,7 @@ private:
     bool m_cacheable : 1 { false };
     bool m_stack : 1 { false };
     bool m_mmap : 1 { false };
+    bool m_kernel : 1 { false };
     mutable OwnPtr<Bitmap> m_cow_map;
 };
 

@@ -36,6 +36,7 @@ namespace WindowServer {
 
 class ClientConnection;
 class Cursor;
+class Window;
 
 enum class WallpaperMode {
     Simple,
@@ -52,7 +53,7 @@ public:
 
     void compose();
     void invalidate();
-    void invalidate(const Gfx::Rect&);
+    void invalidate(const Gfx::IntRect&);
 
     bool set_resolution(int desired_width, int desired_height);
 
@@ -64,21 +65,25 @@ public:
     String wallpaper_path() const { return m_wallpaper_path; }
 
     void invalidate_cursor();
-    Gfx::Rect current_cursor_rect() const;
+    Gfx::IntRect current_cursor_rect() const;
 
     void increment_display_link_count(Badge<ClientConnection>);
     void decrement_display_link_count(Badge<ClientConnection>);
+
+    void recompute_occlusions();
 
 private:
     Compositor();
     void init_bitmaps();
     void flip_buffers();
-    void flush(const Gfx::Rect&);
+    void flush(const Gfx::IntRect&);
     void draw_cursor();
     void draw_geometry_label();
     void draw_menubar();
     void run_animations();
     void notify_display_links();
+    bool any_opaque_window_contains_rect(const Gfx::IntRect&);
+    bool any_opaque_window_above_this_one_contains_rect(const Window&, const Gfx::IntRect&);
 
     RefPtr<Core::Timer> m_compose_timer;
     RefPtr<Core::Timer> m_immediate_compose_timer;
@@ -93,9 +98,9 @@ private:
 
     Gfx::DisjointRectSet m_dirty_rects;
 
-    Gfx::Rect m_last_cursor_rect;
-    Gfx::Rect m_last_dnd_rect;
-    Gfx::Rect m_last_geometry_label_rect;
+    Gfx::IntRect m_last_cursor_rect;
+    Gfx::IntRect m_last_dnd_rect;
+    Gfx::IntRect m_last_geometry_label_rect;
 
     String m_wallpaper_path;
     WallpaperMode m_wallpaper_mode { WallpaperMode::Unchecked };

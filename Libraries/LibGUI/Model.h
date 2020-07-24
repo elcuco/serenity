@@ -44,19 +44,15 @@ enum class SortOrder {
     Descending
 };
 
+class ModelClient {
+public:
+    virtual ~ModelClient() { }
+
+    virtual void on_model_update(unsigned flags) = 0;
+};
+
 class Model : public RefCounted<Model> {
 public:
-    struct ColumnMetadata {
-        int preferred_width { 0 };
-        Gfx::TextAlignment text_alignment { Gfx::TextAlignment::CenterLeft };
-        const Gfx::Font* font { nullptr };
-        enum class Sortable {
-            False,
-            True,
-        };
-        Sortable sortable { Sortable::True };
-    };
-
     enum UpdateFlag {
         DontInvalidateIndexes = 0,
         InvalidateAllIndexes = 1 << 0,
@@ -65,21 +61,20 @@ public:
     enum class Role {
         Display,
         Sort,
-        Custom,
         ForegroundColor,
         BackgroundColor,
         Icon,
         Font,
         DragData,
+        TextAlignment,
+        Custom = 0x100, // Applications are free to use roles above this number as they please
     };
 
     virtual ~Model();
 
     virtual int row_count(const ModelIndex& = ModelIndex()) const = 0;
     virtual int column_count(const ModelIndex& = ModelIndex()) const = 0;
-    virtual String row_name(int) const { return {}; }
     virtual String column_name(int) const { return {}; }
-    virtual ColumnMetadata column_metadata(int) const { return {}; }
     virtual Variant data(const ModelIndex&, Role = Role::Display) const = 0;
     virtual void update() = 0;
     virtual ModelIndex parent_index(const ModelIndex&) const { return {}; }
@@ -89,6 +84,8 @@ public:
     virtual void set_data(const ModelIndex&, const Variant&) {}
     virtual int tree_column() const { return 0; }
     virtual bool accepts_drag(const ModelIndex&, const StringView& data_type);
+
+    virtual bool is_column_sortable([[maybe_unused]] int column_index) const { return true; }
 
     bool is_valid(const ModelIndex& index) const
     {
@@ -105,7 +102,8 @@ public:
     void register_view(Badge<AbstractView>, AbstractView&);
     void unregister_view(Badge<AbstractView>, AbstractView&);
 
-    Function<void()> on_update;
+    void register_client(ModelClient&);
+    void unregister_client(ModelClient&);
 
 protected:
     Model();
@@ -117,6 +115,7 @@ protected:
 
 private:
     HashTable<AbstractView*> m_views;
+    HashTable<ModelClient*> m_clients;
 };
 
 inline ModelIndex ModelIndex::parent() const

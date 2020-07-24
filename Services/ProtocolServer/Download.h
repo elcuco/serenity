@@ -31,40 +31,43 @@
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
 #include <AK/URL.h>
-#include <AK/WeakPtr.h>
+#include <ProtocolServer/Forward.h>
 
-class PSClientConnection;
+namespace ProtocolServer {
 
-class Download : public RefCounted<Download> {
+class Download {
 public:
     virtual ~Download();
-
-    static Download* find_by_id(i32);
 
     i32 id() const { return m_id; }
     URL url() const { return m_url; }
 
+    Optional<u32> status_code() const { return m_status_code; }
     Optional<u32> total_size() const { return m_total_size; }
     size_t downloaded_size() const { return m_downloaded_size; }
     const ByteBuffer& payload() const { return m_payload; }
-    const HashMap<String, String>& response_headers() const { return m_response_headers; }
+    const HashMap<String, String, CaseInsensitiveStringTraits>& response_headers() const { return m_response_headers; }
 
     void stop();
 
 protected:
-    explicit Download(PSClientConnection&);
+    explicit Download(ClientConnection&);
 
     void did_finish(bool success);
     void did_progress(Optional<u32> total_size, u32 downloaded_size);
+    void set_status_code(u32 status_code) { m_status_code = status_code; }
     void set_payload(const ByteBuffer&);
-    void set_response_headers(const HashMap<String, String>&);
+    void set_response_headers(const HashMap<String, String, CaseInsensitiveStringTraits>&);
 
 private:
-    i32 m_id;
+    ClientConnection& m_client;
+    i32 m_id { 0 };
     URL m_url;
+    Optional<u32> m_status_code;
     Optional<u32> m_total_size {};
     size_t m_downloaded_size { 0 };
     ByteBuffer m_payload;
-    HashMap<String, String> m_response_headers;
-    WeakPtr<PSClientConnection> m_client;
+    HashMap<String, String, CaseInsensitiveStringTraits> m_response_headers;
 };
+
+}

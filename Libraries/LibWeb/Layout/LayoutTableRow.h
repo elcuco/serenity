@@ -34,18 +34,14 @@ class LayoutTableCell;
 
 class LayoutTableRow final : public LayoutBox {
 public:
-    LayoutTableRow(const Element&, NonnullRefPtr<StyleProperties>);
+    LayoutTableRow(Document&, const Element&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutTableRow() override;
 
-    virtual void layout() override;
-
-    LayoutTableCell* first_cell();
-    const LayoutTableCell* first_cell() const;
-
-    LayoutTableRow* next_row();
-    const LayoutTableRow* next_row() const;
+    void layout_row(const Vector<float>& column_widths);
+    void calculate_column_widths(Vector<float>& column_widths);
 
 private:
+    virtual void layout(LayoutMode) override;
     virtual bool is_table_row() const override { return true; }
     virtual const char* class_name() const override { return "LayoutTableRow"; }
 };

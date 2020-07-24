@@ -49,6 +49,7 @@ public:
     void set_scale(int);
     int scale() { return m_scale; }
     void set_toolbar_height(int height) { m_toolbar_height = height; }
+    int toolbar_height() { return m_toolbar_height; }
 
     void clear();
     void flip(Gfx::Orientation);
@@ -56,11 +57,13 @@ public:
     void navigate(Directions);
     void load_from_file(const String&);
 
-    Function<void(int)> on_scale_change;
+    Function<void(int, Gfx::IntRect)> on_scale_change;
+    Function<void()> on_doubleclick;
     Function<void(const GUI::DropEvent&)> on_drop;
 
 private:
     QSWidget();
+    virtual void doubleclick_event(GUI::MouseEvent&) override;
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void resize_event(GUI::ResizeEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent&) override;
@@ -76,11 +79,11 @@ private:
     RefPtr<Gfx::Bitmap> m_bitmap;
     int m_toolbar_height { 28 };
 
-    Gfx::Rect m_bitmap_rect;
-    int m_scale { 100 };
+    Gfx::IntRect m_bitmap_rect;
+    int m_scale { -1 };
     Gfx::FloatPoint m_pan_origin;
 
-    Gfx::Point m_click_position;
+    Gfx::IntPoint m_click_position;
     Gfx::FloatPoint m_saved_pan_origin;
     Vector<String> m_files_in_same_dir;
 };

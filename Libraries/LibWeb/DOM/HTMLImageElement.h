@@ -27,52 +27,43 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
-#include <LibCore/Forward.h>
+#include <AK/OwnPtr.h>
 #include <LibGfx/Forward.h>
 #include <LibWeb/DOM/HTMLElement.h>
+#include <LibWeb/Loader/ImageLoader.h>
 
 namespace Web {
 
 class LayoutDocument;
 
-class HTMLImageElement : public HTMLElement {
+class HTMLImageElement final : public HTMLElement {
 public:
     using WrapperType = Bindings::HTMLImageElementWrapper;
 
-    HTMLImageElement(Document&, const FlyString& tag_name);
+    HTMLImageElement(Document&, const FlyString& local_name);
     virtual ~HTMLImageElement() override;
 
     virtual void parse_attribute(const FlyString& name, const String& value) override;
 
-    String alt() const { return attribute("alt"); }
-    String src() const { return attribute("src"); }
-    int preferred_width() const;
-    int preferred_height() const;
+    String alt() const { return attribute(HTML::AttributeNames::alt); }
+    String src() const { return attribute(HTML::AttributeNames::src); }
 
     const Gfx::Bitmap* bitmap() const;
-    const Gfx::ImageDecoder* image_decoder() const { return m_image_decoder; }
-
-    void set_volatile(Badge<LayoutDocument>, bool);
 
 private:
-    void load_image(const String& src);
+    virtual void apply_presentational_hints(StyleProperties&) const override;
 
     void animate();
 
-    virtual RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) const override;
+    virtual RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) override;
 
-    RefPtr<Gfx::ImageDecoder> m_image_decoder;
-    ByteBuffer m_encoded_data;
-
-    size_t m_current_frame_index { 0 };
-    size_t m_loops_completed { 0 };
-    NonnullRefPtr<Core::Timer> m_timer;
+    ImageLoader m_image_loader;
 };
 
 template<>
 inline bool is<HTMLImageElement>(const Node& node)
 {
-    return is<Element>(node) && to<Element>(node).tag_name().equals_ignoring_case("img");
+    return is<Element>(node) && to<Element>(node).local_name() == HTML::TagNames::img;
 }
 
 }

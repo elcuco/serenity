@@ -32,16 +32,16 @@ namespace Web {
 namespace Bindings {
 
 class EventListenerWrapper final : public Wrapper {
+    JS_OBJECT(EventListenerWrapper, Wrapper);
+
 public:
-    explicit EventListenerWrapper(EventListener&);
+    EventListenerWrapper(JS::GlobalObject&, EventListener&);
     virtual ~EventListenerWrapper() override;
 
     EventListener& impl() { return *m_impl; }
     const EventListener& impl() const { return *m_impl; }
 
 private:
-    virtual const char* class_name() const override { return "EventListenerWrapper"; }
-
     NonnullRefPtr<EventListener> m_impl;
 };
 

@@ -32,17 +32,17 @@ namespace Web {
 
 class HTMLAnchorElement : public HTMLElement {
 public:
-    HTMLAnchorElement(Document&, const FlyString& tag_name);
+    HTMLAnchorElement(Document&, const FlyString& local_name);
     virtual ~HTMLAnchorElement() override;
 
-    String href() const { return attribute("href"); }
-    String target() const { return attribute("target"); }
+    String href() const { return attribute(HTML::AttributeNames::href); }
+    String target() const { return attribute(HTML::AttributeNames::target); }
 };
 
 template<>
 inline bool is<HTMLAnchorElement>(const Node& node)
 {
-    return is<Element>(node) && to<Element>(node).tag_name().equals_ignoring_case("a");
+    return is<Element>(node) && to<Element>(node).local_name() == HTML::TagNames::a;
 }
 
 }

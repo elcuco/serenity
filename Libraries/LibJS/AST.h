@@ -40,6 +40,7 @@
 namespace JS {
 
 class VariableDeclaration;
+class FunctionDeclaration;
 
 template<class T, class... Args>
 static inline NonnullRefPtr<T>
@@ -52,7 +53,7 @@ class ASTNode : public RefCounted<ASTNode> {
 public:
     virtual ~ASTNode() { }
     virtual const char* class_name() const = 0;
-    virtual Value execute(Interpreter&) const = 0;
+    virtual Value execute(Interpreter&, GlobalObject&) const = 0;
     virtual void dump(int indent) const;
     virtual bool is_identifier() const { return false; }
     virtual bool is_spread_expression() const { return false; }
@@ -60,7 +61,9 @@ public:
     virtual bool is_scope_node() const { return false; }
     virtual bool is_program() const { return false; }
     virtual bool is_variable_declaration() const { return false; }
+    virtual bool is_call_expression() const { return false; }
     virtual bool is_new_expression() const { return false; }
+    virtual bool is_super_expression() const { return false; }
 
 protected:
     ASTNode() { }
@@ -69,17 +72,23 @@ private:
 };
 
 class Statement : public ASTNode {
+public:
+    const FlyString& label() const { return m_label; }
+    void set_label(FlyString string) { m_label = string; }
+
+protected:
+    FlyString m_label;
 };
 
 class EmptyStatement final : public Statement {
 public:
-    Value execute(Interpreter&) const override { return js_undefined(); }
+    Value execute(Interpreter&, GlobalObject&) const override { return js_undefined(); }
     const char* class_name() const override { return "EmptyStatement"; }
 };
 
 class ErrorStatement final : public Statement {
 public:
-    Value execute(Interpreter&) const override { return js_undefined(); }
+    Value execute(Interpreter&, GlobalObject&) const override { return js_undefined(); }
     const char* class_name() const override { return "ErrorStatement"; }
 };
 
@@ -90,7 +99,7 @@ public:
     {
     }
 
-    Value execute(Interpreter&) const override;
+    Value execute(Interpreter&, GlobalObject&) const override;
     const char* class_name() const override { return "ExpressionStatement"; }
     virtual void dump(int indent) const override;
 
@@ -113,11 +122,15 @@ public:
     }
 
     const NonnullRefPtrVector<Statement>& children() const { return m_children; }
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
     void add_variables(NonnullRefPtrVector<VariableDeclaration>);
+    void add_functions(NonnullRefPtrVector<FunctionDeclaration>);
     const NonnullRefPtrVector<VariableDeclaration>& variables() const { return m_variables; }
+    const NonnullRefPtrVector<FunctionDeclaration>& functions() const { return m_functions; }
+    bool in_strict_mode() const { return m_strict_mode; }
+    void set_strict_mode() { m_strict_mode = true; }
 
 protected:
     ScopeNode() { }
@@ -126,6 +139,8 @@ private:
     virtual bool is_scope_node() const final { return true; }
     NonnullRefPtrVector<Statement> m_children;
     NonnullRefPtrVector<VariableDeclaration> m_variables;
+    NonnullRefPtrVector<FunctionDeclaration> m_functions;
+    bool m_strict_mode { false };
 };
 
 class Program : public ScopeNode {
@@ -147,7 +162,7 @@ private:
 
 class Expression : public ASTNode {
 public:
-    virtual Reference to_reference(Interpreter&) const;
+    virtual Reference to_reference(Interpreter&, GlobalObject&) const;
 };
 
 class Declaration : public Statement {
@@ -164,6 +179,7 @@ public:
     const FlyString& name() const { return m_name; }
     const Statement& body() const { return *m_body; }
     const Vector<Parameter>& parameters() const { return m_parameters; };
+    i32 function_length() const { return m_function_length; }
 
 protected:
     FunctionNode(const FlyString& name, NonnullRefPtr<Statement> body, Vector<Parameter> parameters, i32 function_length, NonnullRefPtrVector<VariableDeclaration> variables)
@@ -178,7 +194,6 @@ protected:
     void dump(int indent, const char* class_name) const;
 
     const NonnullRefPtrVector<VariableDeclaration>& variables() const { return m_variables; }
-    i32 function_length() const { return m_function_length; }
 
 private:
     FlyString m_name;
@@ -199,33 +214,37 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
     virtual const char* class_name() const override { return "FunctionDeclaration"; }
 };
 
-class FunctionExpression final : public Expression
+class FunctionExpression final
+    : public Expression
     , public FunctionNode {
 public:
     static bool must_have_name() { return false; }
 
-    FunctionExpression(const FlyString& name, NonnullRefPtr<Statement> body, Vector<Parameter> parameters, i32 function_length, NonnullRefPtrVector<VariableDeclaration> variables)
+    FunctionExpression(const FlyString& name, NonnullRefPtr<Statement> body, Vector<Parameter> parameters, i32 function_length, NonnullRefPtrVector<VariableDeclaration> variables, bool is_arrow_function = false)
         : FunctionNode(name, move(body), move(parameters), function_length, move(variables))
+        , m_is_arrow_function(is_arrow_function)
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
     virtual const char* class_name() const override { return "FunctionExpression"; }
+
+    bool m_is_arrow_function;
 };
 
 class ErrorExpression final : public Expression {
 public:
-    Value execute(Interpreter&) const override { return js_undefined(); }
+    Value execute(Interpreter&, GlobalObject&) const override { return js_undefined(); }
     const char* class_name() const override { return "ErrorExpression"; }
 };
 
@@ -238,7 +257,7 @@ public:
 
     const Expression* argument() const { return m_argument; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -260,7 +279,7 @@ public:
     const Statement& consequent() const { return *m_consequent; }
     const Statement* alternate() const { return m_alternate; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -282,7 +301,7 @@ public:
     const Expression& test() const { return *m_test; }
     const Statement& body() const { return *m_body; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -303,7 +322,7 @@ public:
     const Expression& test() const { return *m_test; }
     const Statement& body() const { return *m_body; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -328,7 +347,7 @@ public:
     const Expression* update() const { return m_update; }
     const Statement& body() const { return *m_body; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -337,6 +356,54 @@ private:
     RefPtr<ASTNode> m_init;
     RefPtr<Expression> m_test;
     RefPtr<Expression> m_update;
+    NonnullRefPtr<Statement> m_body;
+};
+
+class ForInStatement : public Statement {
+public:
+    ForInStatement(NonnullRefPtr<ASTNode> lhs, NonnullRefPtr<Expression> rhs, NonnullRefPtr<Statement> body)
+        : m_lhs(move(lhs))
+        , m_rhs(move(rhs))
+        , m_body(move(body))
+    {
+    }
+
+    const ASTNode& lhs() const { return *m_lhs; }
+    const Expression& rhs() const { return *m_rhs; }
+    const Statement& body() const { return *m_body; }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ForInStatement"; }
+
+    NonnullRefPtr<ASTNode> m_lhs;
+    NonnullRefPtr<Expression> m_rhs;
+    NonnullRefPtr<Statement> m_body;
+};
+
+class ForOfStatement : public Statement {
+public:
+    ForOfStatement(NonnullRefPtr<ASTNode> lhs, NonnullRefPtr<Expression> rhs, NonnullRefPtr<Statement> body)
+        : m_lhs(move(lhs))
+        , m_rhs(move(rhs))
+        , m_body(move(body))
+    {
+    }
+
+    const ASTNode& lhs() const { return *m_lhs; }
+    const Expression& rhs() const { return *m_rhs; }
+    const Statement& body() const { return *m_body; }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ForOfStatement"; }
+
+    NonnullRefPtr<ASTNode> m_lhs;
+    NonnullRefPtr<Expression> m_rhs;
     NonnullRefPtr<Statement> m_body;
 };
 
@@ -374,7 +441,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -400,7 +467,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -429,7 +496,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -447,7 +514,7 @@ public:
     }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "SequenceExpression"; }
@@ -467,7 +534,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -483,13 +550,29 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
     virtual const char* class_name() const override { return "NumericLiteral"; }
 
     double m_value { 0 };
+};
+
+class BigIntLiteral final : public Literal {
+public:
+    explicit BigIntLiteral(String value)
+        : m_value(move(value))
+    {
+    }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "BigIntLiteral"; }
+
+    String m_value;
 };
 
 class StringLiteral final : public Literal {
@@ -499,7 +582,9 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    StringView value() const { return m_value; }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -512,11 +597,32 @@ class NullLiteral final : public Literal {
 public:
     explicit NullLiteral() { }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
     virtual const char* class_name() const override { return "NullLiteral"; }
+};
+
+class RegExpLiteral final : public Literal {
+public:
+    explicit RegExpLiteral(String content, String flags)
+        : m_content(content)
+        , m_flags(flags)
+    {
+    }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+    const String& content() const { return m_content; }
+    const String& flags() const { return m_flags; }
+
+private:
+    virtual const char* class_name() const override { return "RegexLiteral"; }
+
+    String m_content;
+    String m_flags;
 };
 
 class Identifier final : public Expression {
@@ -528,15 +634,96 @@ public:
 
     const FlyString& string() const { return m_string; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
     virtual bool is_identifier() const override { return true; }
-    virtual Reference to_reference(Interpreter&) const override;
+    virtual Reference to_reference(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "Identifier"; }
 
     FlyString m_string;
+};
+
+class ClassMethod final : public ASTNode {
+public:
+    enum class Kind {
+        Method,
+        Getter,
+        Setter,
+    };
+
+    ClassMethod(NonnullRefPtr<Expression> key, NonnullRefPtr<FunctionExpression> function, Kind kind, bool is_static)
+        : m_key(move(key))
+        , m_function(move(function))
+        , m_kind(kind)
+        , m_is_static(is_static)
+    {
+    }
+
+    const Expression& key() const { return *m_key; }
+    Kind kind() const { return m_kind; }
+    bool is_static() const { return m_is_static; }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ClassMethod"; }
+
+    NonnullRefPtr<Expression> m_key;
+    NonnullRefPtr<FunctionExpression> m_function;
+    Kind m_kind;
+    bool m_is_static;
+};
+
+class SuperExpression final : public Expression {
+public:
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual bool is_super_expression() const override { return true; }
+    virtual const char* class_name() const override { return "SuperExpression"; }
+};
+
+class ClassExpression final : public Expression {
+public:
+    ClassExpression(String name, RefPtr<FunctionExpression> constructor, RefPtr<Expression> super_class, NonnullRefPtrVector<ClassMethod> methods)
+        : m_name(move(name))
+        , m_constructor(move(constructor))
+        , m_super_class(move(super_class))
+        , m_methods(move(methods))
+    {
+    }
+
+    StringView name() const { return m_name; }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ClassExpression"; }
+
+    String m_name;
+    RefPtr<FunctionExpression> m_constructor;
+    RefPtr<Expression> m_super_class;
+    NonnullRefPtrVector<ClassMethod> m_methods;
+};
+
+class ClassDeclaration final : public Declaration {
+public:
+    ClassDeclaration(NonnullRefPtr<ClassExpression> class_expression)
+        : m_class_expression(move(class_expression))
+    {
+    }
+
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+    virtual void dump(int indent) const override;
+
+private:
+    virtual const char* class_name() const override { return "ClassDeclaration"; }
+    NonnullRefPtr<ClassExpression> m_class_expression;
 };
 
 class SpreadExpression final : public Expression {
@@ -546,7 +733,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
     virtual bool is_spread_expression() const override { return true; }
 
@@ -558,7 +745,7 @@ private:
 
 class ThisExpression final : public Expression {
 public:
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -578,17 +765,18 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
     virtual const char* class_name() const override { return "CallExpression"; }
+    virtual bool is_call_expression() const override { return true; }
 
     struct ThisAndCallee {
         Value this_value;
         Value callee;
     };
-    ThisAndCallee compute_this_and_callee(Interpreter&) const;
+    ThisAndCallee compute_this_and_callee(Interpreter&, GlobalObject&) const;
 
     NonnullRefPtr<Expression> m_callee;
     const Vector<Argument> m_arguments;
@@ -603,6 +791,7 @@ public:
 
 private:
     virtual const char* class_name() const override { return "NewExpression"; }
+    virtual bool is_call_expression() const override { return false; }
     virtual bool is_new_expression() const override { return true; }
 };
 
@@ -631,7 +820,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -656,7 +845,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -675,6 +864,11 @@ enum class DeclarationKind {
 
 class VariableDeclarator final : public ASTNode {
 public:
+    VariableDeclarator(NonnullRefPtr<Identifier> id)
+        : m_id(move(id))
+    {
+    }
+
     VariableDeclarator(NonnullRefPtr<Identifier> id, RefPtr<Expression> init)
         : m_id(move(id))
         , m_init(move(init))
@@ -684,7 +878,7 @@ public:
     const Identifier& id() const { return m_id; }
     const Expression* init() const { return m_init; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -705,7 +899,7 @@ public:
     virtual bool is_variable_declaration() const override { return true; }
     DeclarationKind declaration_kind() const { return m_declaration_kind; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
     const NonnullRefPtrVector<VariableDeclarator>& declarations() const { return m_declarations; }
@@ -719,27 +913,41 @@ private:
 
 class ObjectProperty final : public ASTNode {
 public:
-    ObjectProperty(NonnullRefPtr<Expression> key, NonnullRefPtr<Expression> value)
+    enum class Type {
+        KeyValue,
+        Getter,
+        Setter,
+        Spread,
+    };
+
+    ObjectProperty(NonnullRefPtr<Expression> key, RefPtr<Expression> value, Type property_type, bool is_method)
         : m_key(move(key))
         , m_value(move(value))
+        , m_property_type(property_type)
+        , m_is_method(is_method)
     {
     }
 
     const Expression& key() const { return m_key; }
-    const Expression& value() const { return m_value; }
+    const Expression& value() const
+    {
+        ASSERT(m_value);
+        return *m_value;
+    }
 
-    bool is_spread() const { return m_is_spread; }
-    void set_is_spread() { m_is_spread = true; }
+    Type type() const { return m_property_type; }
+    bool is_method() const { return m_is_method; }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "ObjectProperty"; }
 
     NonnullRefPtr<Expression> m_key;
-    NonnullRefPtr<Expression> m_value;
-    bool m_is_spread { false };
+    RefPtr<Expression> m_value;
+    Type m_property_type;
+    bool m_is_method { false };
 };
 
 class ObjectExpression : public Expression {
@@ -749,7 +957,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -767,7 +975,7 @@ public:
 
     const Vector<RefPtr<Expression>>& elements() const { return m_elements; }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -789,7 +997,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
     const NonnullRefPtrVector<Expression>& expressions() const { return m_expressions; }
@@ -810,7 +1018,7 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
 
 private:
@@ -829,15 +1037,15 @@ public:
     {
     }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
     virtual void dump(int indent) const override;
-    virtual Reference to_reference(Interpreter&) const override;
+    virtual Reference to_reference(Interpreter&, GlobalObject&) const override;
 
     bool is_computed() const { return m_computed; }
     const Expression& object() const { return *m_object; }
     const Expression& property() const { return *m_property; }
 
-    PropertyName computed_property_name(Interpreter&) const;
+    PropertyName computed_property_name(Interpreter&, GlobalObject&) const;
 
     String to_string_approximation() const;
 
@@ -860,7 +1068,7 @@ public:
     }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "ConditionalExpression"; }
@@ -882,7 +1090,7 @@ public:
     const BlockStatement& body() const { return m_body; }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "CatchClause"; }
@@ -905,7 +1113,7 @@ public:
     const BlockStatement* finalizer() const { return m_finalizer; }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "TryStatement"; }
@@ -925,7 +1133,7 @@ public:
     const Expression& argument() const { return m_argument; }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "ThrowStatement"; }
@@ -945,7 +1153,7 @@ public:
     const NonnullRefPtrVector<Statement>& consequent() const { return m_consequent; }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "SwitchCase"; }
@@ -963,7 +1171,7 @@ public:
     }
 
     virtual void dump(int indent) const override;
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "SwitchStatement"; }
@@ -974,29 +1182,43 @@ private:
 
 class BreakStatement final : public Statement {
 public:
-    BreakStatement() { }
+    BreakStatement(FlyString target_label)
+        : m_target_label(target_label)
+    {
+    }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+
+    const FlyString& target_label() const { return m_target_label; }
 
 private:
     virtual const char* class_name() const override { return "BreakStatement"; }
+
+    FlyString m_target_label;
 };
 
 class ContinueStatement final : public Statement {
 public:
-    ContinueStatement() { }
+    ContinueStatement(FlyString target_label)
+        : m_target_label(target_label)
+    {
+    }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
+
+    const FlyString& target_label() const { return m_target_label; }
 
 private:
     virtual const char* class_name() const override { return "ContinueStatement"; }
+
+    FlyString m_target_label;
 };
 
 class DebuggerStatement final : public Statement {
 public:
     DebuggerStatement() { }
 
-    virtual Value execute(Interpreter&) const override;
+    virtual Value execute(Interpreter&, GlobalObject&) const override;
 
 private:
     virtual const char* class_name() const override { return "DebuggerStatement"; }

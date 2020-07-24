@@ -35,34 +35,44 @@
 
 namespace JS {
 
-static ScriptFunction* script_function_from(Interpreter& interpreter)
+static ScriptFunction* typed_this(Interpreter& interpreter, GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return nullptr;
     if (!this_object->is_function()) {
-        interpreter.throw_exception<TypeError>("Not a function");
+        interpreter.throw_exception<TypeError>(ErrorType::NotAFunctionNoParam);
         return nullptr;
     }
     return static_cast<ScriptFunction*>(this_object);
 }
 
-ScriptFunction* ScriptFunction::create(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, LexicalEnvironment* parent_environment)
+ScriptFunction* ScriptFunction::create(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, LexicalEnvironment* parent_environment, bool is_arrow_function)
 {
-    return global_object.heap().allocate<ScriptFunction>(name, body, move(parameters), m_function_length, parent_environment, *global_object.function_prototype());
+    return global_object.heap().allocate<ScriptFunction>(global_object, global_object, name, body, move(parameters), m_function_length, parent_environment, *global_object.function_prototype(), is_arrow_function);
 }
 
-ScriptFunction::ScriptFunction(const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, LexicalEnvironment* parent_environment, Object& prototype)
-    : Function(prototype)
+ScriptFunction::ScriptFunction(GlobalObject& global_object, const FlyString& name, const Statement& body, Vector<FunctionNode::Parameter> parameters, i32 m_function_length, LexicalEnvironment* parent_environment, Object& prototype, bool is_arrow_function)
+    : Function(prototype, is_arrow_function ? interpreter().this_value(global_object) : Value(), {})
     , m_name(name)
     , m_body(body)
     , m_parameters(move(parameters))
     , m_parent_environment(parent_environment)
     , m_function_length(m_function_length)
+    , m_is_arrow_function(is_arrow_function)
 {
-    put("prototype", Object::create_empty(interpreter(), interpreter().global_object()), 0);
-    put_native_property("length", length_getter, nullptr, Attribute::Configurable);
-    put_native_property("name", name_getter, nullptr, Attribute::Configurable);
+}
+
+void ScriptFunction::initialize(GlobalObject& global_object)
+{
+    Function::initialize(global_object);
+    if (!m_is_arrow_function) {
+        Object* prototype = Object::create_empty(global_object);
+        prototype->define_property("constructor", this, Attribute::Writable | Attribute::Configurable);
+        define_property("prototype", prototype, 0);
+    }
+    define_native_property("length", length_getter, nullptr, Attribute::Configurable);
+    define_native_property("name", name_getter, nullptr, Attribute::Configurable);
 }
 
 ScriptFunction::~ScriptFunction()
@@ -89,9 +99,11 @@ LexicalEnvironment* ScriptFunction::create_environment()
             }
         }
     }
-    if (variables.is_empty())
-        return m_parent_environment;
-    return heap().allocate<LexicalEnvironment>(move(variables), m_parent_environment);
+
+    auto* environment = heap().allocate<LexicalEnvironment>(global_object(), move(variables), m_parent_environment, LexicalEnvironment::EnvironmentRecordType::Function);
+    environment->set_home_object(home_object());
+    environment->set_current_function(*this);
+    return environment;
 }
 
 Value ScriptFunction::call(Interpreter& interpreter)
@@ -102,15 +114,15 @@ Value ScriptFunction::call(Interpreter& interpreter)
         auto parameter = parameters()[i];
         auto value = js_undefined();
         if (parameter.is_rest) {
-            auto* array = Array::create(interpreter.global_object());
+            auto* array = Array::create(global_object());
             for (size_t rest_index = i; rest_index < argument_values.size(); ++rest_index)
-                array->elements().append(argument_values[rest_index]);
+                array->indexed_properties().append(argument_values[rest_index]);
             value = Value(array);
         } else {
             if (i < argument_values.size() && !argument_values[i].is_undefined()) {
                 value = argument_values[i];
             } else if (parameter.default_value) {
-                value = parameter.default_value->execute(interpreter);
+                value = parameter.default_value->execute(interpreter, global_object());
                 if (interpreter.exception())
                     return {};
             }
@@ -118,25 +130,27 @@ Value ScriptFunction::call(Interpreter& interpreter)
         arguments.append({ parameter.name, value });
         interpreter.current_environment()->set(parameter.name, { value, DeclarationKind::Var });
     }
-    return interpreter.run(m_body, arguments, ScopeType::Function);
+    return interpreter.run(global_object(), m_body, arguments, ScopeType::Function);
 }
 
-Value ScriptFunction::construct(Interpreter& interpreter)
+Value ScriptFunction::construct(Interpreter& interpreter, Function&)
 {
+    if (m_is_arrow_function)
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAConstructor, m_name.characters());
     return call(interpreter);
 }
 
-Value ScriptFunction::length_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(ScriptFunction::length_getter)
 {
-    auto* function = script_function_from(interpreter);
+    auto* function = typed_this(interpreter, global_object);
     if (!function)
         return {};
     return Value(static_cast<i32>(function->m_function_length));
 }
 
-Value ScriptFunction::name_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(ScriptFunction::name_getter)
 {
-    auto* function = script_function_from(interpreter);
+    auto* function = typed_this(interpreter, global_object);
     if (!function)
         return {};
     return js_string(interpreter, function->name().is_null() ? "" : function->name());

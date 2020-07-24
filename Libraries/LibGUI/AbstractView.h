@@ -47,12 +47,15 @@ public:
     bool is_editable() const { return m_editable; }
     void set_editable(bool editable) { m_editable = editable; }
 
+    bool is_multi_select() const { return m_multi_select; }
+    void set_multi_select(bool);
+
     virtual bool accepts_focus() const override { return true; }
     virtual void did_update_model(unsigned flags);
     virtual void did_update_selection();
 
-    virtual Gfx::Rect content_rect(const ModelIndex&) const { return {}; }
-    virtual ModelIndex index_at_event_position(const Gfx::Point&) const = 0;
+    virtual Gfx::IntRect content_rect(const ModelIndex&) const { return {}; }
+    virtual ModelIndex index_at_event_position(const Gfx::IntPoint&) const = 0;
     void begin_editing(const ModelIndex&);
     void stop_editing();
 
@@ -71,6 +74,8 @@ public:
 
     NonnullRefPtr<Gfx::Font> font_for_index(const ModelIndex&) const;
 
+    void set_last_valid_hovered_index(const ModelIndex&);
+
 protected:
     AbstractView();
     virtual ~AbstractView() override;
@@ -83,6 +88,12 @@ protected:
     virtual void drop_event(DropEvent&) override;
     virtual void leave_event(Core::Event&) override;
 
+    virtual void clear_selection();
+    virtual void set_selection(const ModelIndex&);
+    virtual void add_selection(const ModelIndex&);
+    virtual void remove_selection(const ModelIndex&);
+    virtual void toggle_selection(const ModelIndex&);
+
     virtual void did_scroll() override;
     void set_hovered_index(const ModelIndex&);
     void activate(const ModelIndex&);
@@ -92,18 +103,20 @@ protected:
     bool m_editable { false };
     ModelIndex m_edit_index;
     RefPtr<Widget> m_edit_widget;
-    Gfx::Rect m_edit_widget_content_rect;
+    Gfx::IntRect m_edit_widget_content_rect;
 
-    Gfx::Point m_left_mousedown_position;
+    Gfx::IntPoint m_left_mousedown_position;
     bool m_might_drag { false };
 
     ModelIndex m_hovered_index;
+    ModelIndex m_last_valid_hovered_index;
 
 private:
     RefPtr<Model> m_model;
     OwnPtr<ModelEditingDelegate> m_editing_delegate;
     ModelSelection m_selection;
     bool m_activates_on_selection { false };
+    bool m_multi_select { true };
 };
 
 }

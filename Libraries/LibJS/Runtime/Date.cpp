@@ -34,15 +34,14 @@ namespace JS {
 
 Date* Date::create(GlobalObject& global_object, Core::DateTime datetime, u16 milliseconds)
 {
-    return global_object.heap().allocate<Date>(datetime, milliseconds, *global_object.date_prototype());
+    return global_object.heap().allocate<Date>(global_object, datetime, milliseconds, *global_object.date_prototype());
 }
 
 Date::Date(Core::DateTime datetime, u16 milliseconds, Object& prototype)
-    : Object(&prototype)
+    : Object(prototype)
     , m_datetime(datetime)
     , m_milliseconds(milliseconds)
 {
-    set_prototype(&prototype);
 }
 
 Date::~Date()

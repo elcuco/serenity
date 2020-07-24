@@ -29,17 +29,19 @@
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <AK/String.h>
-#include <LibCore/Forward.h>
+#include <LibCore/Object.h>
 #include <LibGUI/Forward.h>
 #include <LibGUI/Shortcut.h>
 #include <LibGfx/Forward.h>
 
 namespace GUI {
 
-class Application {
+class Application : public Core::Object {
+    C_OBJECT(Application);
+
 public:
-    static Application& the();
-    Application(int argc, char** argv);
+    static Application* the();
+
     ~Application();
 
     int exec();
@@ -51,7 +53,7 @@ public:
     void register_global_shortcut_action(Badge<Action>, Action&);
     void unregister_global_shortcut_action(Badge<Action>, Action&);
 
-    void show_tooltip(const StringView&, const Gfx::Point& screen_location);
+    void show_tooltip(const StringView&, const Gfx::IntPoint& screen_location);
     void hide_tooltip();
 
     bool quit_when_last_window_deleted() const { return m_quit_when_last_window_deleted; }
@@ -68,7 +70,11 @@ public:
 
     void set_system_palette(SharedBuffer&);
 
+    bool focus_debugging_enabled() const { return m_focus_debugging_enabled; }
+
 private:
+    Application(int argc, char** argv);
+
     OwnPtr<Core::EventLoop> m_event_loop;
     RefPtr<MenuBar> m_menubar;
     RefPtr<Gfx::PaletteImpl> m_palette;
@@ -77,6 +83,7 @@ private:
     class TooltipWindow;
     RefPtr<TooltipWindow> m_tooltip_window;
     bool m_quit_when_last_window_deleted { true };
+    bool m_focus_debugging_enabled { false };
     String m_invoked_as;
     Vector<String> m_args;
 };

@@ -62,13 +62,22 @@ BookmarksBarWidget::BookmarksBarWidget(const String& bookmarks_file, bool enable
     m_additional->set_text(">");
     m_additional->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_additional->set_preferred_size(14, 20);
-    m_additional->on_click = [&] {
+    m_additional->on_click = [this](auto) {
         if (m_additional_menu) {
             m_additional_menu->popup(m_additional->relative_position().translated(relative_position().translated(m_additional->window()->position())));
         }
     };
 
     m_separator = GUI::Widget::construct();
+
+    m_context_menu = GUI::Menu::construct();
+    m_context_menu->add_action(GUI::Action::create("Delete", [this](auto&) {
+        remove_bookmark(m_context_menu_url);
+    }));
+    m_context_menu->add_action(GUI::Action::create("Open in new tab", [this](auto&) {
+        if (on_bookmark_click)
+            on_bookmark_click(m_context_menu_url, Mod_Ctrl);
+    }));
 
     Vector<GUI::JsonArrayModel::FieldSpec> fields;
     fields.empend("title", "Title", Gfx::TextAlignment::CenterLeft);
@@ -79,16 +88,18 @@ BookmarksBarWidget::BookmarksBarWidget(const String& bookmarks_file, bool enable
 
 BookmarksBarWidget::~BookmarksBarWidget()
 {
+    if (m_model)
+        m_model->unregister_client(*this);
 }
 
 void BookmarksBarWidget::set_model(RefPtr<GUI::Model> model)
 {
     if (model == m_model)
         return;
+    if (m_model)
+        m_model->unregister_client(*this);
     m_model = move(model);
-    m_model->on_update = [&]() {
-        did_update_model();
-    };
+    m_model->register_client(*this);
 }
 
 void BookmarksBarWidget::resize_event(GUI::ResizeEvent& event)
@@ -97,7 +108,7 @@ void BookmarksBarWidget::resize_event(GUI::ResizeEvent& event)
     update_content_size();
 }
 
-void BookmarksBarWidget::did_update_model()
+void BookmarksBarWidget::on_model_update(unsigned)
 {
     for (auto* child : child_widgets()) {
         child->remove_from_parent();
@@ -111,7 +122,7 @@ void BookmarksBarWidget::did_update_model()
         auto title = model()->data(model()->index(item_index, 0)).to_string();
         auto url = model()->data(model()->index(item_index, 1)).to_string();
 
-        Gfx::Rect rect { width, 0, font().width(title) + 32, height() };
+        Gfx::IntRect rect { width, 0, font().width(title) + 32, height() };
 
         auto& button = add<GUI::Button>();
         m_bookmarks.append(button);
@@ -123,9 +134,14 @@ void BookmarksBarWidget::did_update_model()
         button.set_preferred_size(font().width(title) + 32, 20);
         button.set_relative_rect(rect);
 
-        button.on_click = [title, url, this] {
+        button.on_click = [title, url, this](auto modifiers) {
             if (on_bookmark_click)
-                on_bookmark_click(title, url);
+                on_bookmark_click(url, modifiers);
+        };
+
+        button.on_context_menu_request = [this, url](auto& context_menu_event) {
+            m_context_menu_url = url;
+            m_context_menu->popup(context_menu_event.screen_position());
         };
 
         width += rect.width();
@@ -166,7 +182,7 @@ void BookmarksBarWidget::update_content_size()
             m_additional_menu->add_action(GUI::Action::create(bookmark.text(),
                 Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-html.png"),
                 [&](auto&) {
-                    bookmark.on_click();
+                    bookmark.on_click(0);
                 }));
         }
     }

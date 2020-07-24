@@ -48,7 +48,7 @@ ssize_t InodeFile::read(FileDescription& description, size_t offset, u8* buffer,
 {
     ssize_t nread = m_inode->read_bytes(offset, count, buffer, &description);
     if (nread > 0)
-        Thread::current->did_file_read(nread);
+        Thread::current()->did_file_read(nread);
     return nread;
 }
 
@@ -57,7 +57,7 @@ ssize_t InodeFile::write(FileDescription& description, size_t offset, const u8* 
     ssize_t nwritten = m_inode->write_bytes(offset, count, data, &description);
     if (nwritten > 0) {
         m_inode->set_mtime(kgettimeofday().tv_sec);
-        Thread::current->did_file_write(nwritten);
+        Thread::current()->did_file_write(nwritten);
     }
     return nwritten;
 }
@@ -97,14 +97,18 @@ KResult InodeFile::truncate(u64 size)
     return KSuccess;
 }
 
-KResult InodeFile::chown(uid_t uid, gid_t gid)
+KResult InodeFile::chown(FileDescription& description, uid_t uid, gid_t gid)
 {
-    return VFS::the().chown(*m_inode, uid, gid);
+    ASSERT(description.inode() == m_inode);
+    ASSERT(description.custody());
+    return VFS::the().chown(*description.custody(), uid, gid);
 }
 
-KResult InodeFile::chmod(mode_t mode)
+KResult InodeFile::chmod(FileDescription& description, mode_t mode)
 {
-    return VFS::the().chmod(*m_inode, mode);
+    ASSERT(description.inode() == m_inode);
+    ASSERT(description.custody());
+    return VFS::the().chmod(*description.custody(), mode);
 }
 
 }

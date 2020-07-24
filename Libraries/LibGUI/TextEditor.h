@@ -46,6 +46,13 @@ public:
         MultiLine,
         SingleLine
     };
+
+    enum Mode {
+        Editable,
+        ReadOnly,
+        DisplayOnly
+    };
+
     virtual ~TextEditor() override;
 
     const TextDocument& document() const { return *m_document; }
@@ -53,8 +60,10 @@ public:
 
     void set_document(TextDocument&);
 
-    bool is_readonly() const { return m_readonly; }
-    void set_readonly(bool);
+    bool has_visible_list() const { return m_has_visible_list; }
+    void set_has_visible_list(bool);
+    bool has_open_button() const { return m_has_open_button; }
+    void set_has_open_button(bool);
 
     virtual bool is_automatic_indentation_enabled() const final { return m_automatic_indentation_enabled; }
     void set_automatic_indentation_enabled(bool enabled) { m_automatic_indentation_enabled = enabled; }
@@ -71,8 +80,17 @@ public:
     bool is_single_line() const { return m_type == SingleLine; }
     bool is_multi_line() const { return m_type == MultiLine; }
 
+    Mode mode() const { return m_mode; }
+    bool is_editable() const { return m_mode == Editable; }
+    bool is_readonly() const { return m_mode == ReadOnly; }
+    bool is_displayonly() const { return m_mode == DisplayOnly; }
+    void set_mode(const Mode);
+
     bool is_ruler_visible() const { return m_ruler_visible; }
     void set_ruler_visible(bool b) { m_ruler_visible = b; }
+
+    void set_icon(const Gfx::Bitmap*);
+    const Gfx::Bitmap* icon() const { return m_icon; }
 
     Function<void()> on_cursor_change;
     Function<void()> on_selection_change;
@@ -85,8 +103,6 @@ public:
     int line_height() const;
     TextPosition cursor() const { return m_cursor; }
     TextRange normalized_selection() const { return m_selection.normalized(); }
-    // FIXME: This should take glyph spacing into account, no?
-    int glyph_width() const;
 
     void insert_at_cursor_or_replace_selection(const StringView&);
     bool write_to_file(const StringView& path);
@@ -111,8 +127,13 @@ public:
     void redo() { document().redo(); }
 
     Function<void()> on_change;
+    Function<void()> on_mousedown;
     Function<void()> on_return_pressed;
     Function<void()> on_escape_pressed;
+    Function<void()> on_up_pressed;
+    Function<void()> on_down_pressed;
+    Function<void()> on_pageup_pressed;
+    Function<void()> on_pagedown_pressed;
 
     Action& undo_action() { return *m_undo_action; }
     Action& redo_action() { return *m_redo_action; }
@@ -130,6 +151,8 @@ public:
 
     const SyntaxHighlighter* syntax_highlighter() const;
     void set_syntax_highlighter(OwnPtr<SyntaxHighlighter>);
+
+    bool is_in_drag_select() const { return m_in_drag_select; }
 
 protected:
     explicit TextEditor(Type = Type::MultiLine);
@@ -150,10 +173,10 @@ protected:
     virtual void context_menu_event(ContextMenuEvent&) override;
     virtual void resize_event(ResizeEvent&) override;
     virtual void theme_change_event(ThemeChangeEvent&) override;
-    virtual void cursor_did_change() {}
-    Gfx::Rect ruler_content_rect(size_t line) const;
+    virtual void cursor_did_change() { }
+    Gfx::IntRect ruler_content_rect(size_t line) const;
 
-    TextPosition text_position_at(const Gfx::Point&) const;
+    TextPosition text_position_at(const Gfx::IntPoint&) const;
     bool ruler_visible() const { return m_ruler_visible; }
 
 private:
@@ -172,11 +195,35 @@ private:
     void paint_ruler(Painter&);
     void update_content_size();
     void did_change();
+    int fixed_glyph_width() const;
 
-    Gfx::Rect line_content_rect(size_t item_index) const;
-    Gfx::Rect line_widget_rect(size_t line_index) const;
-    Gfx::Rect cursor_content_rect() const;
-    Gfx::Rect content_rect_for_position(const TextPosition&) const;
+    void defer_reflow();
+    void undefer_reflow();
+
+    int icon_size() const { return 16; }
+    int icon_padding() const { return 2; }
+    int button_padding() const { return m_has_open_button ? 17 : 2; }
+
+    class ReflowDeferrer {
+    public:
+        ReflowDeferrer(TextEditor& editor)
+            : m_editor(editor)
+        {
+            m_editor.defer_reflow();
+        }
+        ~ReflowDeferrer()
+        {
+            m_editor.undefer_reflow();
+        }
+
+    private:
+        TextEditor& m_editor;
+    };
+
+    Gfx::IntRect line_content_rect(size_t item_index) const;
+    Gfx::IntRect line_widget_rect(size_t line_index) const;
+    Gfx::IntRect cursor_content_rect() const;
+    Gfx::IntRect content_rect_for_position(const TextPosition&) const;
     void update_cursor();
     const NonnullOwnPtrVector<TextDocumentLine>& lines() const { return document().lines(); }
     NonnullOwnPtrVector<TextDocumentLine>& lines() { return document().lines(); }
@@ -189,8 +236,8 @@ private:
     void delete_selection();
     void did_update_selection();
     int content_x_for_position(const TextPosition&) const;
-    Gfx::Rect ruler_rect_in_inner_coordinates() const;
-    Gfx::Rect visible_text_rect_in_inner_coordinates() const;
+    Gfx::IntRect ruler_rect_in_inner_coordinates() const;
+    Gfx::IntRect visible_text_rect_in_inner_coordinates() const;
     void recompute_all_visual_lines();
     void ensure_cursor_is_valid();
     void flush_pending_change_notification_if_needed();
@@ -213,6 +260,7 @@ private:
     }
 
     Type m_type { MultiLine };
+    Mode m_mode { Editable };
 
     TextPosition m_cursor;
     Gfx::TextAlignment m_text_alignment { Gfx::TextAlignment::CenterLeft };
@@ -222,10 +270,11 @@ private:
     bool m_has_pending_change_notification { false };
     bool m_automatic_indentation_enabled { false };
     bool m_line_wrapping_enabled { false };
-    bool m_readonly { false };
+    bool m_has_visible_list { false };
+    bool m_has_open_button { false };
     int m_line_spacing { 4 };
     size_t m_soft_tab_width { 4 };
-    int m_horizontal_content_padding { 2 };
+    int m_horizontal_content_padding { 3 };
     TextRange m_selection;
     RefPtr<Menu> m_context_menu;
     RefPtr<Action> m_undo_action;
@@ -239,6 +288,11 @@ private:
     Core::ElapsedTimer m_triple_click_timer;
     NonnullRefPtrVector<Action> m_custom_context_menu_actions;
 
+    size_t m_reflow_deferred { 0 };
+    bool m_reflow_requested { false };
+
+    bool is_visual_data_up_to_date() const { return !m_reflow_requested; }
+
     RefPtr<TextDocument> m_document;
 
     template<typename Callback>
@@ -246,7 +300,7 @@ private:
 
     struct LineVisualData {
         Vector<size_t, 1> visual_line_breaks;
-        Gfx::Rect visual_rect;
+        Gfx::IntRect visual_rect;
     };
 
     NonnullOwnPtrVector<LineVisualData> m_line_visual_data;
@@ -254,7 +308,9 @@ private:
     OwnPtr<SyntaxHighlighter> m_highlighter;
 
     RefPtr<Core::Timer> m_automatic_selection_scroll_timer;
-    Gfx::Point m_last_mousemove_position;
+    Gfx::IntPoint m_last_mousemove_position;
+
+    RefPtr<Gfx::Bitmap> m_icon;
 };
 
 }

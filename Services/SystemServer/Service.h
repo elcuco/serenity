@@ -36,6 +36,7 @@ class Service final : public Core::Object {
     C_OBJECT(Service)
 
 public:
+    bool is_enabled() const;
     void activate();
     void did_exit(int exit_code);
 
@@ -46,7 +47,7 @@ public:
 private:
     Service(const Core::ConfigFile&, const StringView& name);
 
-    void spawn();
+    void spawn(int socket_fd = -1);
 
     // Path to the executable. By default this is /bin/{m_name}.
     String m_executable_path;
@@ -61,6 +62,10 @@ private:
     String m_socket_path;
     // File system permissions for the socket.
     mode_t m_socket_permissions { 0 };
+    // Whether we should accept connections on the socket and pass the accepted
+    // (and not listening) socket to the service. This requires a multi-instance
+    // service.
+    bool m_accept_socket_connections { false };
     // Whether we should only spawn this service once somebody connects to the socket.
     bool m_lazy;
     // The name of the user we should run this service as.
@@ -68,8 +73,16 @@ private:
     uid_t m_uid { 0 };
     gid_t m_gid { 0 };
     Vector<gid_t> m_extra_gids;
+    // The working directory in which to spawn the service.
+    String m_working_directory;
+    // Boot modes to run this service in. By default, this is the graphical mode.
+    Vector<String> m_boot_modes;
+    // Whether several instances of this service can run at once.
+    bool m_multi_instance { false };
+    // Environment variables to pass to the service.
+    Vector<String> m_environment;
 
-    // PID of the running instance of this service.
+    // For single-instance services, PID of the running instance of this service.
     pid_t m_pid { -1 };
     // An open fd to the socket.
     int m_socket_fd { -1 };
@@ -81,10 +94,8 @@ private:
     // times where it has exited unsuccessfully and too quickly.
     int m_restart_attempts { 0 };
 
-    // The working directory in which to spawn the service
-    String m_working_directory;
-
     void resolve_user();
     void setup_socket();
     void setup_notifier();
+    void handle_socket_connection();
 };

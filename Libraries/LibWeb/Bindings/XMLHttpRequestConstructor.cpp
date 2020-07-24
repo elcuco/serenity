@@ -33,19 +33,23 @@
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
 #include <LibWeb/DOM/XMLHttpRequest.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
-XMLHttpRequestConstructor::XMLHttpRequestConstructor()
-    : NativeFunction(*interpreter().global_object().function_prototype())
+XMLHttpRequestConstructor::XMLHttpRequestConstructor(JS::GlobalObject& global_object)
+    : NativeFunction(*global_object.function_prototype())
 {
-    put("length", JS::Value(1), JS::Attribute::Configurable);
+}
 
-    put("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
-    put("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
-    put("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
-    put("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
-    put("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
+void XMLHttpRequestConstructor::initialize(JS::GlobalObject& global_object)
+{
+    NativeFunction::initialize(global_object);
+    define_property("length", JS::Value(1), JS::Attribute::Configurable);
+
+    define_property("UNSENT", JS::Value((i32)XMLHttpRequest::ReadyState::Unsent), JS::Attribute::Enumerable);
+    define_property("OPENED", JS::Value((i32)XMLHttpRequest::ReadyState::Opened), JS::Attribute::Enumerable);
+    define_property("HEADERS_RECEIVED", JS::Value((i32)XMLHttpRequest::ReadyState::HeadersReceived), JS::Attribute::Enumerable);
+    define_property("LOADING", JS::Value((i32)XMLHttpRequest::ReadyState::Loading), JS::Attribute::Enumerable);
+    define_property("DONE", JS::Value((i32)XMLHttpRequest::ReadyState::Done), JS::Attribute::Enumerable);
 }
 
 XMLHttpRequestConstructor::~XMLHttpRequestConstructor()
@@ -54,14 +58,13 @@ XMLHttpRequestConstructor::~XMLHttpRequestConstructor()
 
 JS::Value XMLHttpRequestConstructor::call(JS::Interpreter& interpreter)
 {
-    return construct(interpreter);
+    return construct(interpreter, *this);
 }
 
-JS::Value XMLHttpRequestConstructor::construct(JS::Interpreter& interpreter)
+JS::Value XMLHttpRequestConstructor::construct(JS::Interpreter& interpreter, Function&)
 {
-    auto& window = static_cast<WindowObject&>(interpreter.global_object());
-    return interpreter.heap().allocate<XMLHttpRequestWrapper>(XMLHttpRequest::create(window.impl()));
+    auto& window = static_cast<WindowObject&>(global_object());
+    return interpreter.heap().allocate<XMLHttpRequestWrapper>(window, window, XMLHttpRequest::create(window.impl()));
 }
 
-}
 }

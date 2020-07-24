@@ -99,6 +99,11 @@ struct EnableIf<true, T> {
 };
 
 template<class T>
+struct AddConst {
+    typedef const T Type;
+};
+
+template<class T>
 struct RemoveConst {
     typedef T Type;
 };
@@ -313,7 +318,7 @@ struct MakeUnsigned {
 };
 
 template<>
-struct MakeUnsigned<char> {
+struct MakeUnsigned<signed char> {
     typedef unsigned char type;
 };
 
@@ -362,6 +367,72 @@ struct MakeUnsigned<unsigned long long> {
     typedef unsigned long long type;
 };
 
+template<typename T>
+struct MakeSigned {
+};
+
+template<>
+struct MakeSigned<signed char> {
+    typedef signed char type;
+};
+
+template<>
+struct MakeSigned<short> {
+    typedef short type;
+};
+
+template<>
+struct MakeSigned<int> {
+    typedef int type;
+};
+
+template<>
+struct MakeSigned<long> {
+    typedef long type;
+};
+
+template<>
+struct MakeSigned<long long> {
+    typedef long long type;
+};
+
+template<>
+struct MakeSigned<unsigned char> {
+    typedef char type;
+};
+
+template<>
+struct MakeSigned<unsigned short> {
+    typedef short type;
+};
+
+template<>
+struct MakeSigned<unsigned int> {
+    typedef int type;
+};
+
+template<>
+struct MakeSigned<unsigned long> {
+    typedef long type;
+};
+
+template<>
+struct MakeSigned<unsigned long long> {
+    typedef long long type;
+};
+
+template<class T>
+struct IsVoid : IsSame<void, typename RemoveCV<T>::Type> {
+};
+
+template<class T>
+struct IsConst : FalseType {
+};
+
+template<class T>
+struct IsConst<const T> : TrueType {
+};
+
 template<typename T, typename U = T>
 inline constexpr T exchange(T& slot, U&& value)
 {
@@ -372,12 +443,16 @@ inline constexpr T exchange(T& slot, U&& value)
 
 }
 
+using AK::AddConst;
 using AK::ceil_div;
 using AK::clamp;
 using AK::Conditional;
 using AK::exchange;
 using AK::forward;
+using AK::IsConst;
 using AK::IsSame;
+using AK::IsVoid;
+using AK::MakeSigned;
 using AK::MakeUnsigned;
 using AK::max;
 using AK::min;

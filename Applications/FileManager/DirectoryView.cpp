@@ -25,14 +25,62 @@
  */
 
 #include "DirectoryView.h"
-#include <AK/FileSystemPath.h>
 #include <AK/NumberFormat.h>
 #include <AK/StringBuilder.h>
-#include <AK/URL.h>
-#include <LibDesktop/Launcher.h>
+#include <LibGUI/MessageBox.h>
 #include <LibGUI/SortingProxyModel.h>
 #include <stdio.h>
 #include <unistd.h>
+
+NonnullRefPtr<GUI::Action> LauncherHandler::create_launch_action(Function<void(const LauncherHandler&)> launch_handler)
+{
+    RefPtr<Gfx::Bitmap> icon;
+    auto icon_file = details().icons.get("16x16");
+    if (icon_file.has_value())
+        icon = Gfx::Bitmap::load_from_file(icon_file.value());
+    return GUI::Action::create(details().name, move(icon), [this, launch_handler = move(launch_handler)](auto&) {
+        launch_handler(*this);
+    });
+}
+
+RefPtr<LauncherHandler> DirectoryView::get_default_launch_handler(const NonnullRefPtrVector<LauncherHandler>& handlers)
+{
+    // If this is an application, pick it first
+    for (size_t i = 0; i < handlers.size(); i++) {
+        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::Application)
+            return handlers[i];
+    }
+    // If there's a handler preferred by the user, pick this first
+    for (size_t i = 0; i < handlers.size(); i++) {
+        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::UserPreferred)
+            return handlers[i];
+    }
+    // Otherwise, use the user's default, if available
+    for (size_t i = 0; i < handlers.size(); i++) {
+        if (handlers[i].details().launcher_type == Desktop::Launcher::LauncherType::UserDefault)
+            return handlers[i];
+    }
+    // If still no match, use the first one we find
+    if (!handlers.is_empty()) {
+        return handlers[0];
+    }
+
+    return {};
+}
+
+NonnullRefPtrVector<LauncherHandler> DirectoryView::get_launch_handlers(const URL& url)
+{
+    NonnullRefPtrVector<LauncherHandler> handlers;
+    for (auto& h : Desktop::Launcher::get_handlers_with_details_for_url(url)) {
+        handlers.append(adopt(*new LauncherHandler(h)));
+    }
+    return handlers;
+}
+
+NonnullRefPtrVector<LauncherHandler> DirectoryView::get_launch_handlers(const String& path)
+{
+    return get_launch_handlers(URL::create_with_file_protocol(path));
+}
 
 void DirectoryView::handle_activation(const GUI::ModelIndex& index)
 {
@@ -53,7 +101,15 @@ void DirectoryView::handle_activation(const GUI::ModelIndex& index)
         return;
     }
 
-    Desktop::Launcher::open(URL::create_with_file_protocol(path));
+    auto url = URL::create_with_file_protocol(path);
+    auto launcher_handlers = get_launch_handlers(url);
+    auto default_launcher = get_default_launch_handler(launcher_handlers);
+    if (default_launcher && on_launch) {
+        on_launch(url, *default_launcher);
+    } else {
+        auto error_message = String::format("Could not open %s", path.characters());
+        GUI::MessageBox::show(window(), error_message, "File Manager", GUI::MessageBox::Type::Error);
+    }
 }
 
 DirectoryView::DirectoryView()
@@ -96,16 +152,7 @@ DirectoryView::DirectoryView()
             on_path_change(model().root_path());
     };
 
-    //  NOTE: We're using the on_update hook on the GUI::SortingProxyModel here instead of
-    //        the GUI::FileSystemModel's hook. This is because GUI::SortingProxyModel has already
-    //        installed an on_update hook on the GUI::FileSystemModel internally.
-    // FIXME: This is an unfortunate design. We should come up with something better.
-    m_table_view->model()->on_update = [this] {
-        for_each_view_implementation([](auto& view) {
-            view.selection().clear();
-        });
-        update_statusbar();
-    };
+    m_model->register_client(*this);
 
     m_model->on_thumbnail_progress = [this](int done, int total) {
         if (on_thumbnail_progress)
@@ -119,8 +166,7 @@ DirectoryView::DirectoryView()
         handle_activation(index);
     };
     m_table_view->on_activation = [&](auto& index) {
-        auto& filter_model = (GUI::SortingProxyModel&)*m_table_view->model();
-        handle_activation(filter_model.map_to_target(index));
+        handle_activation(map_table_view_index(index));
     };
 
     m_table_view->on_selection_change = [this] {
@@ -141,7 +187,7 @@ DirectoryView::DirectoryView()
 
     m_table_view->on_context_menu_request = [this](auto& index, auto& event) {
         if (on_context_menu_request)
-            on_context_menu_request(*m_table_view, index, event);
+            on_context_menu_request(*m_table_view, map_table_view_index(index), event);
     };
     m_icon_view->on_context_menu_request = [this](auto& index, auto& event) {
         if (on_context_menu_request)
@@ -154,7 +200,7 @@ DirectoryView::DirectoryView()
 
     m_table_view->on_drop = [this](auto& index, auto& event) {
         if (on_drop)
-            on_drop(*m_table_view, index, event);
+            on_drop(*m_table_view, map_table_view_index(index), event);
     };
     m_icon_view->on_drop = [this](auto& index, auto& event) {
         if (on_drop)
@@ -170,6 +216,17 @@ DirectoryView::DirectoryView()
 
 DirectoryView::~DirectoryView()
 {
+    m_model->unregister_client(*this);
+}
+
+void DirectoryView::on_model_update(unsigned flags)
+{
+    if (flags & GUI::Model::UpdateFlag::InvalidateAllIndexes) {
+        for_each_view_implementation([](auto& view) {
+            view.selection().clear();
+        });
+    }
+    update_statusbar();
 }
 
 void DirectoryView::set_view_mode(ViewMode mode)
@@ -246,6 +303,12 @@ void DirectoryView::open_next_directory()
     }
 }
 
+GUI::ModelIndex DirectoryView::map_table_view_index(const GUI::ModelIndex& index) const
+{
+    auto& filter_model = (const GUI::SortingProxyModel&)*m_table_view->model();
+    return filter_model.map_to_target(index);
+}
+
 void DirectoryView::update_statusbar()
 {
     size_t total_size = model().node({}).total_size;
@@ -280,10 +343,8 @@ void DirectoryView::update_statusbar()
         auto index = current_view().selection().first();
 
         // FIXME: This is disgusting. This code should not even be aware that there is a GUI::SortingProxyModel in the table view.
-        if (m_view_mode == ViewMode::Table) {
-            auto& filter_model = (GUI::SortingProxyModel&)*m_table_view->model();
-            index = filter_model.map_to_target(index);
-        }
+        if (m_view_mode == ViewMode::Table)
+            index = map_table_view_index(index);
 
         auto& node = model().node(index);
         if (!node.symlink_target.is_empty()) {

@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/BufferStream.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/StringBuilder.h>
@@ -35,6 +34,7 @@
 //#define GENERATE_DEBUG_CODE
 
 struct Parameter {
+    Vector<String> attributes;
     String type;
     String name;
 };
@@ -127,6 +127,23 @@ int main(int argc, char** argv)
             consume_whitespace();
             if (peek() == ')')
                 break;
+            if (peek() == '[') {
+                consume_one();
+                for (;;) {
+                    if (peek() == ']') {
+                        consume_one();
+                        consume_whitespace();
+                        break;
+                    }
+                    if (peek() == ',') {
+                        consume_one();
+                        consume_whitespace();
+                    }
+                    auto attribute = extract_while([](char ch) { return ch != ']' && ch != ','; });
+                    parameter.attributes.append(attribute);
+                    consume_whitespace();
+                }
+            }
             parameter.type = extract_while([](char ch) { return !isspace(ch); });
             consume_whitespace();
             parameter.name = extract_while([](char ch) { return !isspace(ch) && ch != ',' && ch != ')'; });
@@ -210,9 +227,7 @@ int main(int argc, char** argv)
         consume_specific('=');
         consume_whitespace();
         auto magic_string = extract_while([](char ch) { return !isspace(ch) && ch != '{'; });
-        bool ok;
-        endpoints.last().magic = magic_string.to_int(ok);
-        ASSERT(ok);
+        endpoints.last().magic = magic_string.to_int().value();
         consume_whitespace();
         consume_specific('{');
         parse_messages();
@@ -226,6 +241,8 @@ int main(int argc, char** argv)
     out() << "#pragma once";
     out() << "#include <AK/BufferStream.h>";
     out() << "#include <AK/OwnPtr.h>";
+    out() << "#include <AK/URL.h>";
+    out() << "#include <AK/Utf8View.h>";
     out() << "#include <LibGfx/Color.h>";
     out() << "#include <LibGfx/Rect.h>";
     out() << "#include <LibGfx/ShareableBitmap.h>";
@@ -310,37 +327,10 @@ int main(int argc, char** argv)
                 if (parameter.type == "bool")
                     initial_value = "false";
                 out() << "        " << parameter.type << " " << parameter.name << " = " << initial_value << ";";
-
-                if (parameter.type == "Vector<Gfx::Rect>") {
-                    out() << "        u64 " << parameter.name << "_size = 0;";
-                    out() << "        stream >> " << parameter.name << "_size;";
-                    out() << "        for (size_t i = 0; i < " << parameter.name << "_size; ++i) {";
-                    out() << "            Gfx::Rect rect;";
-                    out() << "            if (!decoder.decode(rect))";
-                    out() << "                return nullptr;";
-                    out() << "            " << parameter.name << ".append(move(rect));";
-                    out() << "        }";
-                } else if (parameter.type == "Vector<i32>") {
-                    out() << "        u64 " << parameter.name << "_size = 0;";
-                    out() << "        stream >> " << parameter.name << "_size;";
-                    out() << "        for (size_t i = 0; i < " << parameter.name << "_size; ++i) {";
-                    out() << "            i32 value;";
-                    out() << "            stream >> value;";
-                    out() << "            if (stream.handle_read_failure())";
-                    out() << "                return nullptr;";
-                    out() << "            " << parameter.name << ".append(value);";
-                    out() << "        }";
-                } else if (parameter.type.starts_with("Optional<")) {
-                    out() << "        bool has_value = false;";
-                    out() << "        stream >> has_value;";
-                    out() << "        if (has_value) {";
-                    out() << "            " << parameter.type.substring_view(9, parameter.type.length() - 10) << " value;";
-                    out() << "            if (!decoder.decode(value))";
-                    out() << "                return nullptr;";
-                    out() << "            " << parameter.name << " = value;";
-                    out() << "        }";
-                } else {
-                    out() << "        if (!decoder.decode(" << parameter.name << "))";
+                out() << "        if (!decoder.decode(" << parameter.name << "))";
+                out() << "            return nullptr;";
+                if (parameter.attributes.contains_slow("UTF8")) {
+                    out() << "        if (!Utf8View(" << parameter.name << ").validate())";
                     out() << "            return nullptr;";
                 }
             }
@@ -362,43 +352,7 @@ int main(int argc, char** argv)
             out() << "        stream << endpoint_magic();";
             out() << "        stream << (int)MessageID::" << name << ";";
             for (auto& parameter : parameters) {
-                if (parameter.type == "Gfx::Color") {
-                    out() << "        stream << m_" << parameter.name << ".value();";
-                } else if (parameter.type == "Gfx::Size") {
-                    out() << "        stream << m_" << parameter.name << ".width();";
-                    out() << "        stream << m_" << parameter.name << ".height();";
-                } else if (parameter.type == "Gfx::Point") {
-                    out() << "        stream << m_" << parameter.name << ".x();";
-                    out() << "        stream << m_" << parameter.name << ".y();";
-                } else if (parameter.type == "Gfx::Rect") {
-                    out() << "        stream << m_" << parameter.name << ".x();";
-                    out() << "        stream << m_" << parameter.name << ".y();";
-                    out() << "        stream << m_" << parameter.name << ".width();";
-                    out() << "        stream << m_" << parameter.name << ".height();";
-                } else if (parameter.type == "Vector<Gfx::Rect>") {
-                    out() << "        stream << (u64)m_" << parameter.name << ".size();";
-                    out() << "        for (auto& rect : m_" << parameter.name << ") {";
-                    out() << "            stream << rect.x();";
-                    out() << "            stream << rect.y();";
-                    out() << "            stream << rect.width();";
-                    out() << "            stream << rect.height();";
-                    out() << "        }";
-                } else if (parameter.type == "Vector<i32>") {
-                    out() << "        stream << (u64)m_" << parameter.name << ".size();";
-                    out() << "        for (auto value : m_" << parameter.name << ") {";
-                    out() << "            stream << value;";
-                    out() << "        }";
-                } else if (parameter.type == "Gfx::ShareableBitmap") {
-                    out() << "        stream << m_" << parameter.name << ".shbuf_id();";
-                    out() << "        stream << m_" << parameter.name << ".width();";
-                    out() << "        stream << m_" << parameter.name << ".height();";
-                } else if (parameter.type.starts_with("Optional<")) {
-                    out() << "        stream << m_" << parameter.name << ".has_value();";
-                    out() << "        if (m_" << parameter.name << ".has_value())";
-                    out() << "            stream << m_" << parameter.name << ".value();";
-                } else {
-                    out() << "        stream << m_" << parameter.name << ";";
-                }
+                out() << "        stream << m_" << parameter.name << ";";
             }
             out() << "        return buffer;";
             out() << "    }";
@@ -437,19 +391,33 @@ int main(int argc, char** argv)
         out() << "        BufferStream stream(const_cast<ByteBuffer&>(buffer));";
         out() << "        i32 message_endpoint_magic = 0;";
         out() << "        stream >> message_endpoint_magic;";
+        out() << "        if (stream.handle_read_failure()) {";
+#ifdef GENERATE_DEBUG_CODE
+        out() << "            dbg() << \"Failed to read message endpoint magic\";";
+#endif
+        out() << "            return nullptr;";
+        out() << "        }";
         out() << "        if (message_endpoint_magic != " << endpoint.magic << ") {";
 #ifdef GENERATE_DEBUG_CODE
-        sout() << "            sout() << \"endpoint magic \" << message_endpoint_magic << \" != " << endpoint.magic << "\";";
+        out() << "            dbg() << \"endpoint magic \" << message_endpoint_magic << \" != " << endpoint.magic << "\";";
 #endif
         out() << "            return nullptr;";
         out() << "        }";
         out() << "        i32 message_id = 0;";
         out() << "        stream >> message_id;";
+        out() << "        if (stream.handle_read_failure()) {";
+#ifdef GENERATE_DEBUG_CODE
+        out() << "            dbg() << \"Failed to read message ID\";";
+#endif
+        out() << "            return nullptr;";
+        out() << "        }";
+        out() << "        OwnPtr<IPC::Message> message;";
         out() << "        switch (message_id) {";
         for (auto& message : endpoint.messages) {
             auto do_decode_message = [&](const String& name) {
                 out() << "        case (int)Messages::" << endpoint.name << "::MessageID::" << name << ":";
-                out() << "            return Messages::" << endpoint.name << "::" << name << "::decode(stream, size_in_bytes);";
+                out() << "            message = Messages::" << endpoint.name << "::" << name << "::decode(stream, size_in_bytes);";
+                out() << "            break;";
             };
             do_decode_message(message.name);
             if (message.is_synchronous)
@@ -457,11 +425,18 @@ int main(int argc, char** argv)
         }
         out() << "        default:";
 #ifdef GENERATE_DEBUG_CODE
-        sout() << "            sout() << \"Failed to decode " << endpoint.name << ".(\" << message_id << \")\";";
+        out() << "            dbg() << \"Failed to decode " << endpoint.name << ".(\" << message_id << \")\";";
 #endif
         out() << "            return nullptr;";
 
         out() << "        }";
+        out() << "        if (stream.handle_read_failure()) {";
+#ifdef GENERATE_DEBUG_CODE
+        out() << "            sout() << \"Failed to read the message\";";
+#endif
+        out() << "            return nullptr;";
+        out() << "        }";
+        out() << "        return message;";
         out() << "    }";
         out();
         out() << "    virtual OwnPtr<IPC::Message> handle(const IPC::Message& message) override";

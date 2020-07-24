@@ -24,8 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <AK/FileSystemPath.h>
 #include <AK/Function.h>
+#include <AK/LexicalPath.h>
+#include <LibCore/StandardPaths.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
@@ -42,9 +43,9 @@
 
 namespace GUI {
 
-Optional<String> FilePicker::get_open_filepath(const String& window_title)
+Optional<String> FilePicker::get_open_filepath(Window* parent_window, const String& window_title, Options options)
 {
-    auto picker = FilePicker::construct(Mode::Open);
+    auto picker = FilePicker::construct(parent_window, Mode::Open, options);
 
     if (!window_title.is_null())
         picker->set_title(window_title);
@@ -60,9 +61,9 @@ Optional<String> FilePicker::get_open_filepath(const String& window_title)
     return {};
 }
 
-Optional<String> FilePicker::get_save_filepath(const String& title, const String& extension)
+Optional<String> FilePicker::get_save_filepath(Window* parent_window, const String& title, const String& extension, Options options)
 {
-    auto picker = FilePicker::construct(Mode::Save, String::format("%s.%s", title.characters(), extension.characters()));
+    auto picker = FilePicker::construct(parent_window, Mode::Save, options, String::format("%s.%s", title.characters(), extension.characters()));
 
     if (picker->exec() == Dialog::ExecOK) {
         String file_path = picker->selected_file().string();
@@ -75,11 +76,22 @@ Optional<String> FilePicker::get_save_filepath(const String& title, const String
     return {};
 }
 
-FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView& path, Window* parent_window)
+FilePicker::FilePicker(Window* parent_window, Mode mode, Options options, const StringView& file_name, const StringView& path)
     : Dialog(parent_window)
     , m_model(FileSystemModel::create())
     , m_mode(mode)
 {
+    switch (m_mode) {
+    case Mode::Open:
+        set_title("Open File");
+        break;
+    case Mode::OpenMultiple:
+        set_title("Open Files");
+        break;
+    case Mode::Save:
+        set_title("Save File");
+        break;
+    }
     set_title(m_mode == Mode::Open ? "Open File" : "Save File");
     set_rect(200, 200, 700, 400);
     auto& horizontal_container = set_main_widget<Widget>();
@@ -93,7 +105,7 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
 
     auto& upper_container = vertical_container.add<Widget>();
     upper_container.set_layout<HorizontalBoxLayout>();
-    upper_container.layout()->set_spacing(4);
+    upper_container.layout()->set_spacing(2);
     upper_container.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
     upper_container.set_preferred_size(0, 26);
 
@@ -106,12 +118,13 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
 #endif
     toolbar.set_has_frame(false);
 
-    auto& location_textbox = upper_container.add<TextBox>();
-    location_textbox.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    location_textbox.set_preferred_size(0, 20);
-    location_textbox.set_text(path);
+    m_location_textbox = upper_container.add<TextBox>();
+    m_location_textbox->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
+    m_location_textbox->set_preferred_size(0, 22);
+    m_location_textbox->set_text(path);
 
     m_view = vertical_container.add<MultiView>();
+    m_view->set_multi_select(m_mode == Mode::OpenMultiple);
     m_view->set_model(SortingProxyModel::create(*m_model));
     m_view->set_model_column(FileSystemModel::Column::Name);
     m_view->model()->set_key_column_and_sort_order(GUI::FileSystemModel::Column::Name, GUI::SortOrder::Ascending);
@@ -120,35 +133,36 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
     m_view->set_column_hidden(FileSystemModel::Column::Permissions, true);
     m_view->set_column_hidden(FileSystemModel::Column::Inode, true);
     m_view->set_column_hidden(FileSystemModel::Column::SymlinkTarget, true);
-    m_model->set_root_path(path);
 
-    location_textbox.on_return_pressed = [&] {
-        m_model->set_root_path(location_textbox.text());
-        clear_preview();
+    set_path(path);
+
+    m_model->register_client(*this);
+
+    m_location_textbox->on_return_pressed = [this] {
+        set_path(m_location_textbox->text());
     };
 
     auto open_parent_directory_action = Action::create("Open parent directory", { Mod_Alt, Key_Up }, Gfx::Bitmap::load_from_file("/res/icons/16x16/open-parent-directory.png"), [this](const Action&) {
-        m_model->set_root_path(String::format("%s/..", m_model->root_path().characters()));
-        clear_preview();
+        set_path(String::format("%s/..", m_model->root_path().characters()));
     });
     toolbar.add_action(*open_parent_directory_action);
 
     auto go_home_action = CommonActions::make_go_home_action([this](auto&) {
-        m_model->set_root_path(Core::StandardPaths::home_directory());
+        set_path(Core::StandardPaths::home_directory());
     });
     toolbar.add_action(go_home_action);
     toolbar.add_separator();
 
     auto mkdir_action = Action::create("New directory...", Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [this](const Action&) {
-        auto& input_box = add<InputBox>("Enter name:", "New directory");
-        if (input_box.exec() == InputBox::ExecOK && !input_box.text_value().is_empty()) {
-            auto new_dir_path = FileSystemPath(String::format("%s/%s",
-                                                   m_model->root_path().characters(),
-                                                   input_box.text_value().characters()))
+        String value;
+        if (InputBox::show(value, this, "Enter name:", "New directory") == InputBox::ExecOK && !value.is_empty()) {
+            auto new_dir_path = LexicalPath(String::format("%s/%s",
+                                                m_model->root_path().characters(),
+                                                value.characters()))
                                     .string();
             int rc = mkdir(new_dir_path.characters(), 0777);
             if (rc < 0) {
-                MessageBox::show(String::format("mkdir(\"%s\") failed: %s", new_dir_path.characters(), strerror(errno)), "Error", MessageBox::Type::Error, MessageBox::InputType::OK, this);
+                MessageBox::show(this, String::format("mkdir(\"%s\") failed: %s", new_dir_path.characters(), strerror(errno)), "Error", MessageBox::Type::Error);
             } else {
                 m_model->update();
             }
@@ -171,7 +185,7 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
     lower_container.set_layout<VerticalBoxLayout>();
     lower_container.layout()->set_spacing(4);
     lower_container.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    lower_container.set_preferred_size(0, 60);
+    lower_container.set_preferred_size(0, 45);
 
     auto& filename_container = lower_container.add<Widget>();
     filename_container.set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
@@ -196,13 +210,15 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
         auto& filter_model = (SortingProxyModel&)*m_view->model();
         auto local_index = filter_model.map_to_target(index);
         const FileSystemModel::Node& node = m_model->node(local_index);
-        FileSystemPath path { node.full_path(m_model) };
+        LexicalPath path { node.full_path(m_model) };
 
-        clear_preview();
+        if (have_preview())
+            clear_preview();
 
         if (!node.is_directory())
             m_filename_textbox->set_text(node.name);
-        set_preview(path);
+        if (have_preview())
+            set_preview(path);
     };
 
     auto& button_container = lower_container.add<Widget>();
@@ -216,7 +232,7 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
     cancel_button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
     cancel_button.set_preferred_size(80, 0);
     cancel_button.set_text("Cancel");
-    cancel_button.on_click = [this] {
+    cancel_button.on_click = [this](auto) {
         done(ExecCancel);
     };
 
@@ -224,7 +240,7 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
     ok_button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
     ok_button.set_preferred_size(80, 0);
     ok_button.set_text(ok_button_name(m_mode));
-    ok_button.on_click = [this] {
+    ok_button.on_click = [this](auto) {
         on_file_return();
     };
 
@@ -235,67 +251,80 @@ FilePicker::FilePicker(Mode mode, const StringView& file_name, const StringView&
         auto path = node.full_path(m_model);
 
         if (node.is_directory()) {
-            m_model->set_root_path(path);
+            set_path(path);
             // NOTE: 'node' is invalid from here on
         } else {
             on_file_return();
         }
     };
 
-    auto& preview_container = horizontal_container.add<Frame>();
-    preview_container.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
-    preview_container.set_preferred_size(180, 0);
-    preview_container.set_layout<VerticalBoxLayout>();
-    preview_container.layout()->set_margins({ 8, 8, 8, 8 });
+    if (!((unsigned)options & (unsigned)Options::DisablePreview)) {
+        m_preview_container = horizontal_container.add<Frame>();
+        m_preview_container->set_visible(false);
+        m_preview_container->set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
+        m_preview_container->set_preferred_size(180, 0);
+        m_preview_container->set_layout<VerticalBoxLayout>();
+        m_preview_container->layout()->set_margins({ 8, 8, 8, 8 });
 
-    m_preview_image_label = preview_container.add<Label>();
-    m_preview_image_label->set_should_stretch_icon(true);
-    m_preview_image_label->set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
-    m_preview_image_label->set_preferred_size(160, 160);
+        m_preview_image = m_preview_container->add<ImageWidget>();
+        m_preview_image->set_should_stretch(true);
+        m_preview_image->set_auto_resize(false);
+        m_preview_image->set_preferred_size(160, 160);
 
-    m_preview_name_label = preview_container.add<Label>();
-    m_preview_name_label->set_font(Gfx::Font::default_bold_font());
-    m_preview_name_label->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    m_preview_name_label->set_preferred_size(0, m_preview_name_label->font().glyph_height());
+        m_preview_name_label = m_preview_container->add<Label>();
+        m_preview_name_label->set_font(Gfx::Font::default_bold_font());
+        m_preview_name_label->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
+        m_preview_name_label->set_preferred_size(0, m_preview_name_label->font().glyph_height());
 
-    m_preview_geometry_label = preview_container.add<Label>();
-    m_preview_geometry_label->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
-    m_preview_geometry_label->set_preferred_size(0, m_preview_name_label->font().glyph_height());
+        m_preview_geometry_label = m_preview_container->add<Label>();
+        m_preview_geometry_label->set_size_policy(SizePolicy::Fill, SizePolicy::Fixed);
+        m_preview_geometry_label->set_preferred_size(0, m_preview_name_label->font().glyph_height());
+    }
 }
 
 FilePicker::~FilePicker()
 {
+    m_model->unregister_client(*this);
 }
 
-void FilePicker::set_preview(const FileSystemPath& path)
+void FilePicker::on_model_update(unsigned)
 {
-    if (path.has_extension(".png")) {
+    m_location_textbox->set_text(m_model->root_path());
+    if (have_preview())
+        clear_preview();
+}
+
+void FilePicker::set_preview(const LexicalPath& path)
+{
+    if (Gfx::Bitmap::is_path_a_supported_image_format(path.string())) {
         auto bitmap = Gfx::Bitmap::load_from_file(path.string());
         if (!bitmap) {
             clear_preview();
             return;
         }
-        bool should_stretch = bitmap->width() > m_preview_image_label->width() || bitmap->height() > m_preview_image_label->height();
+        bool should_stretch = bitmap->width() > m_preview_image->width() || bitmap->height() > m_preview_image->height();
         m_preview_name_label->set_text(path.basename());
         m_preview_geometry_label->set_text(bitmap->size().to_string());
-        m_preview_image_label->set_should_stretch_icon(should_stretch);
-        m_preview_image_label->set_icon(move(bitmap));
+        m_preview_image->set_should_stretch(should_stretch);
+        m_preview_image->set_bitmap(move(bitmap));
+        m_preview_container->set_visible(true);
     }
 }
 
 void FilePicker::clear_preview()
 {
-    m_preview_image_label->set_icon(nullptr);
+    m_preview_image->set_bitmap(nullptr);
     m_preview_name_label->set_text(String::empty());
     m_preview_geometry_label->set_text(String::empty());
+    m_preview_container->set_visible(false);
 }
 
 void FilePicker::on_file_return()
 {
-    FileSystemPath path(String::format("%s/%s", m_model->root_path().characters(), m_filename_textbox->text().characters()));
+    LexicalPath path(String::format("%s/%s", m_model->root_path().characters(), m_filename_textbox->text().characters()));
 
     if (FilePicker::file_exists(path.string()) && m_mode == Mode::Save) {
-        auto result = MessageBox::show("File already exists, overwrite?", "Existing File", MessageBox::Type::Warning, MessageBox::InputType::OKCancel);
+        auto result = MessageBox::show(this, "File already exists, overwrite?", "Existing File", MessageBox::Type::Warning, MessageBox::InputType::OKCancel);
         if (result == MessageBox::ExecCancel)
             return;
     }
@@ -316,6 +345,15 @@ bool FilePicker::file_exists(const StringView& path)
         return true;
     }
     return false;
+}
+
+void FilePicker::set_path(const String& path)
+{
+    if (path == Core::StandardPaths::home_directory())
+        m_location_textbox->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/home-directory.png"));
+    else
+        m_location_textbox->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-folder.png"));
+    m_model->set_root_path(path);
 }
 
 }

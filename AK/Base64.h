@@ -24,12 +24,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#pragma once
+
 #include <AK/Forward.h>
 
 namespace AK {
 
 ByteBuffer decode_base64(const StringView&);
 
+String encode_base64(const ByteBuffer&);
+
 }
 
 using AK::decode_base64;
+using AK::encode_base64;

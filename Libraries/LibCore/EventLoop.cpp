@@ -29,6 +29,7 @@
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/NeverDestroyed.h>
+#include <AK/TemporaryChange.h>
 #include <AK/Time.h>
 #include <LibCore/Event.h>
 #include <LibCore/EventLoop.h>
@@ -40,16 +41,18 @@
 #include <LibThread/Lock.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
-//#define CEVENTLOOP_DEBUG
+//#define EVENTLOOP_DEBUG
 //#define DEFERRED_INVOKE_DEBUG
 
 namespace Core {
@@ -78,6 +81,10 @@ static NeverDestroyed<IDAllocator> s_id_allocator;
 static HashMap<int, NonnullOwnPtr<EventLoopTimer>>* s_timers;
 static HashTable<Notifier*>* s_notifiers;
 int EventLoop::s_wake_pipe_fds[2];
+HashMap<int, EventLoop::SignalHandlers> EventLoop::s_signal_handlers;
+int EventLoop::s_handling_signal = 0;
+int EventLoop::s_next_signal_id = 0;
+pid_t EventLoop::s_pid;
 static RefPtr<LocalServer> s_rpc_server;
 HashMap<int, RefPtr<RPCClient>> s_rpc_clients;
 
@@ -94,7 +101,9 @@ public:
             u32 length;
             int nread = m_socket->read((u8*)&length, sizeof(length));
             if (nread == 0) {
+#ifdef EVENTLOOP_DEBUG
                 dbg() << "RPC client disconnected";
+#endif
                 shutdown();
                 return;
             }
@@ -102,13 +111,13 @@ public:
             auto request = m_socket->read(length);
 
             auto request_json = JsonValue::from_string(request);
-            if (!request_json.is_object()) {
+            if (!request_json.has_value() || !request_json.value().is_object()) {
                 dbg() << "RPC client sent invalid request";
                 shutdown();
                 return;
             }
 
-            handle_request(request_json.as_object());
+            handle_request(request_json.value().as_object());
         };
     }
     virtual ~RPCClient() override
@@ -222,6 +231,7 @@ EventLoop::EventLoop()
 
     if (!s_main_event_loop) {
         s_main_event_loop = this;
+        s_pid = getpid();
 #if defined(SOCK_NONBLOCK)
         int rc = pipe2(s_wake_pipe_fds, O_CLOEXEC);
 #else
@@ -233,29 +243,49 @@ EventLoop::EventLoop()
         ASSERT(rc == 0);
         s_event_loop_stack->append(this);
 
-        auto rpc_path = String::format("/tmp/rpc.%d", getpid());
-        rc = unlink(rpc_path.characters());
-        if (rc < 0 && errno != ENOENT) {
-            perror("unlink");
-            ASSERT_NOT_REACHED();
+        if (!s_rpc_server) {
+            if (!start_rpc_server())
+                dbg() << "Core::EventLoop: Failed to start an RPC server";
         }
-        s_rpc_server = LocalServer::construct();
-        s_rpc_server->set_name("Core::EventLoop_RPC_server");
-        bool listening = s_rpc_server->listen(rpc_path);
-        ASSERT(listening);
-
-        s_rpc_server->on_ready_to_accept = [&] {
-            RPCClient::construct(s_rpc_server->accept());
-        };
     }
 
-#ifdef CEVENTLOOP_DEBUG
+#ifdef EVENTLOOP_DEBUG
     dbg() << getpid() << " Core::EventLoop constructed :)";
 #endif
 }
 
 EventLoop::~EventLoop()
 {
+}
+
+bool EventLoop::start_rpc_server()
+{
+    // Create /tmp/rpc if it doesn't exist.
+    int rc = mkdir("/tmp/rpc", 0777);
+    if (rc == 0) {
+        // Ensure it gets created as 0777 despite our umask.
+        rc = chmod("/tmp/rpc", 0777);
+        if (rc < 0) {
+            perror("chmod /tmp/rpc");
+            // Continue further.
+        }
+    } else if (errno != EEXIST) {
+        perror("mkdir /tmp/rpc");
+        return false;
+    }
+
+    auto rpc_path = String::format("/tmp/rpc/%d", getpid());
+    rc = unlink(rpc_path.characters());
+    if (rc < 0 && errno != ENOENT) {
+        perror("unlink");
+        return false;
+    }
+    s_rpc_server = LocalServer::construct();
+    s_rpc_server->set_name("Core::EventLoop_RPC_server");
+    s_rpc_server->on_ready_to_accept = [&] {
+        RPCClient::construct(s_rpc_server->accept());
+    };
+    return s_rpc_server->listen(rpc_path);
 }
 
 EventLoop& EventLoop::main()
@@ -273,14 +303,18 @@ EventLoop& EventLoop::current()
 
 void EventLoop::quit(int code)
 {
+#ifdef EVENTLOOP_DEBUG
     dbg() << "Core::EventLoop::quit(" << code << ")";
+#endif
     m_exit_requested = true;
     m_exit_code = code;
 }
 
 void EventLoop::unquit()
 {
+#ifdef EVENTLOOP_DEBUG
     dbg() << "Core::EventLoop::unquit()";
+#endif
     m_exit_requested = false;
     m_exit_code = 0;
 }
@@ -320,8 +354,7 @@ int EventLoop::exec()
 
 void EventLoop::pump(WaitMode mode)
 {
-    if (m_queued_events.is_empty())
-        wait_for_event(mode);
+    wait_for_event(mode);
 
     decltype(m_queued_events) events;
     {
@@ -333,7 +366,7 @@ void EventLoop::pump(WaitMode mode)
         auto& queued_event = events.at(i);
         auto* receiver = queued_event.receiver.ptr();
         auto& event = *queued_event.event;
-#ifdef CEVENTLOOP_DEBUG
+#ifdef EVENTLOOP_DEBUG
         if (receiver)
             dbg() << "Core::EventLoop: " << *receiver << " event " << (int)event.type();
 #endif
@@ -343,7 +376,10 @@ void EventLoop::pump(WaitMode mode)
                 ASSERT_NOT_REACHED();
                 return;
             default:
+#ifdef EVENTLOOP_DEBUG
                 dbg() << "Event type " << event.type() << " with no receiver :(";
+#endif
+                break;
             }
         } else if (event.type() == Event::Type::DeferredInvoke) {
 #ifdef DEFERRED_INVOKE_DEBUG
@@ -357,7 +393,7 @@ void EventLoop::pump(WaitMode mode)
 
         if (m_exit_requested) {
             LOCKER(m_private->lock);
-#ifdef CEVENTLOOP_DEBUG
+#ifdef EVENTLOOP_DEBUG
             dbg() << "Core::EventLoop: Exit requested. Rejigging " << (events.size() - i) << " events.";
 #endif
             decltype(m_queued_events) new_event_queue;
@@ -374,16 +410,120 @@ void EventLoop::pump(WaitMode mode)
 void EventLoop::post_event(Object& receiver, NonnullOwnPtr<Event>&& event)
 {
     LOCKER(m_private->lock);
-#ifdef CEVENTLOOP_DEBUG
+#ifdef EVENTLOOP_DEBUG
     dbg() << "Core::EventLoop::post_event: {" << m_queued_events.size() << "} << receiver=" << receiver << ", event=" << event;
 #endif
     m_queued_events.empend(receiver, move(event));
+}
+
+EventLoop::SignalHandlers::SignalHandlers(int signo)
+    : m_signo(signo)
+    , m_original_handler(signal(signo, EventLoop::handle_signal))
+{
+#ifdef EVENTLOOP_DEBUG
+    dbg() << "Core::EventLoop: Registered handler for signal " << m_signo;
+#endif
+}
+
+EventLoop::SignalHandlers::~SignalHandlers()
+{
+    if (m_valid) {
+#ifdef EVENTLOOP_DEBUG
+        dbg() << "Core::EventLoop: Unregistering handler for signal " << m_signo;
+#endif
+        signal(m_signo, m_original_handler);
+    }
+}
+
+void EventLoop::SignalHandlers::dispatch()
+{
+    for (auto& handler : m_handlers)
+        handler.value(m_signo);
+}
+
+int EventLoop::SignalHandlers::add(Function<void(int)>&& handler)
+{
+    int id = ++EventLoop::s_next_signal_id; // TODO: worry about wrapping and duplicates?
+    m_handlers.set(id, move(handler));
+    return id;
+}
+
+bool EventLoop::SignalHandlers::remove(int handler_id)
+{
+    ASSERT(handler_id != 0);
+    return m_handlers.remove(handler_id);
+}
+
+void EventLoop::dispatch_signal(int signo)
+{
+    // We need to protect the handler from being removed while handling it
+    TemporaryChange change(s_handling_signal, signo);
+    auto handlers = s_signal_handlers.find(signo);
+    if (handlers != s_signal_handlers.end()) {
+#ifdef EVENTLOOP_DEBUG
+        dbg() << "Core::EventLoop: dispatching signal " << signo;
+#endif
+        handlers->value.dispatch();
+    }
+}
+
+void EventLoop::handle_signal(int signo)
+{
+    ASSERT(signo != 0);
+    // We MUST check if the current pid still matches, because there
+    // is a window between fork() and exec() where a signal delivered
+    // to our fork could be inadvertedly routed to the parent process!
+    if (getpid() == s_pid) {
+        int nwritten = write(s_wake_pipe_fds[1], &signo, sizeof(signo));
+        if (nwritten < 0) {
+            perror("EventLoop::register_signal: write");
+            ASSERT_NOT_REACHED();
+        }
+    } else {
+        // We're a fork who received a signal, reset s_pid
+        s_pid = 0;
+    }
+}
+
+int EventLoop::register_signal(int signo, Function<void(int)> handler)
+{
+    ASSERT(signo != 0);
+    ASSERT(s_handling_signal != signo); // can't register the same signal while handling it
+    auto handlers = s_signal_handlers.find(signo);
+    if (handlers == s_signal_handlers.end()) {
+        SignalHandlers signal_handlers(signo);
+        auto handler_id = signal_handlers.add(move(handler));
+        s_signal_handlers.set(signo, move(signal_handlers));
+        return handler_id;
+    } else {
+        return handlers->value.add(move(handler));
+    }
+}
+
+void EventLoop::unregister_signal(int handler_id)
+{
+    ASSERT(handler_id != 0);
+    int remove_signo = 0;
+    for (auto& h : s_signal_handlers) {
+        auto& handlers = h.value;
+        if (handlers.m_signo == s_handling_signal) {
+            // can't remove the same signal while handling it
+            ASSERT(!handlers.have(handler_id));
+        } else if (handlers.remove(handler_id)) {
+            if (handlers.is_empty())
+                remove_signo = handlers.m_signo;
+            break;
+        }
+    }
+    if (remove_signo != 0)
+        s_signal_handlers.remove(remove_signo);
 }
 
 void EventLoop::wait_for_event(WaitMode mode)
 {
     fd_set rfds;
     fd_set wfds;
+retry:
     FD_ZERO(&rfds);
     FD_ZERO(&wfds);
 
@@ -415,14 +555,14 @@ void EventLoop::wait_for_event(WaitMode mode)
     timeval now;
     struct timeval timeout = { 0, 0 };
     bool should_wait_forever = false;
-    if (mode == WaitMode::WaitForEvents) {
-        if (!s_timers->is_empty() && queued_events_is_empty) {
+    if (mode == WaitMode::WaitForEvents && queued_events_is_empty) {
+        auto next_timer_expiration = get_next_timer_expiration();
+        if (next_timer_expiration.has_value()) {
             timespec now_spec;
             clock_gettime(CLOCK_MONOTONIC, &now_spec);
             now.tv_sec = now_spec.tv_sec;
             now.tv_usec = now_spec.tv_nsec / 1000;
-            get_next_timer_expiration(timeout);
-            timeval_sub(timeout, now, timeout);
+            timeval_sub(next_timer_expiration.value(), now, timeout);
             if (timeout.tv_sec < 0) {
                 timeout.tv_sec = 0;
                 timeout.tv_usec = 0;
@@ -430,19 +570,42 @@ void EventLoop::wait_for_event(WaitMode mode)
         } else {
             should_wait_forever = true;
         }
-    } else {
-        should_wait_forever = false;
     }
 
-    int marked_fd_count = Core::safe_syscall(select, max_fd + 1, &rfds, &wfds, nullptr, should_wait_forever ? nullptr : &timeout);
+try_select_again:
+    int marked_fd_count = select(max_fd + 1, &rfds, &wfds, nullptr, should_wait_forever ? nullptr : &timeout);
+    if (marked_fd_count < 0) {
+        int saved_errno = errno;
+        if (saved_errno == EINTR) {
+            if (m_exit_requested)
+                return;
+            goto try_select_again;
+        }
+#ifdef EVENTLOOP_DEBUG
+        dbg() << "Core::EventLoop::wait_for_event: " << marked_fd_count << " (" << saved_errno << ": " << strerror(saved_errno) << ")";
+#endif
+        // Blow up, similar to Core::safe_syscall.
+        ASSERT_NOT_REACHED();
+    }
     if (FD_ISSET(s_wake_pipe_fds[0], &rfds)) {
-        char buffer[32];
-        auto nread = read(s_wake_pipe_fds[0], buffer, sizeof(buffer));
+        int wake_events[8];
+        auto nread = read(s_wake_pipe_fds[0], wake_events, sizeof(wake_events));
         if (nread < 0) {
             perror("read from wake pipe");
             ASSERT_NOT_REACHED();
         }
         ASSERT(nread > 0);
+        bool wake_requested = false;
+        int event_count = nread / sizeof(wake_events[0]);
+        for (int i = 0; i < event_count; i++) {
+            if (wake_events[i] != 0)
+                dispatch_signal(wake_events[i]);
+            else
+                wake_requested = true;
+        }
+
+        if (!wake_requested && nread == sizeof(wake_events))
+            goto retry;
     }
 
     if (!s_timers->is_empty()) {
@@ -461,7 +624,7 @@ void EventLoop::wait_for_event(WaitMode mode)
             && !it.value->owner->is_visible_for_timer_purposes()) {
             continue;
         }
-#ifdef CEVENTLOOP_DEBUG
+#ifdef EVENTLOOP_DEBUG
         dbg() << "Core::EventLoop: Timer " << timer.timer_id << " has expired, sending Core::TimerEvent to " << timer.owner;
 #endif
         post_event(*timer.owner, make<TimerEvent>(timer.timer_id));
@@ -478,11 +641,11 @@ void EventLoop::wait_for_event(WaitMode mode)
 
     for (auto& notifier : *s_notifiers) {
         if (FD_ISSET(notifier->fd(), &rfds)) {
-            if (notifier->on_ready_to_read)
+            if (notifier->event_mask() & Notifier::Event::Read)
                 post_event(*notifier, make<NotifierReadEvent>(notifier->fd()));
         }
         if (FD_ISSET(notifier->fd(), &wfds)) {
-            if (notifier->on_ready_to_write)
+            if (notifier->event_mask() & Notifier::Event::Write)
                 post_event(*notifier, make<NotifierWriteEvent>(notifier->fd()));
         }
     }
@@ -500,10 +663,9 @@ void EventLoopTimer::reload(const timeval& now)
     fire_time.tv_usec += (interval % 1000) * 1000;
 }
 
-void EventLoop::get_next_timer_expiration(timeval& soonest)
+Optional<struct timeval> EventLoop::get_next_timer_expiration()
 {
-    ASSERT(!s_timers->is_empty());
-    bool has_checked_any = false;
+    Optional<struct timeval> soonest {};
     for (auto& it : *s_timers) {
         auto& fire_time = it.value->fire_time;
         if (it.value->fire_when_not_visible == TimerShouldFireWhenNotVisible::No
@@ -511,10 +673,10 @@ void EventLoop::get_next_timer_expiration(timeval& soonest)
             && !it.value->owner->is_visible_for_timer_purposes()) {
             continue;
         }
-        if (!has_checked_any || fire_time.tv_sec < soonest.tv_sec || (fire_time.tv_sec == soonest.tv_sec && fire_time.tv_usec < soonest.tv_usec))
+        if (!soonest.has_value() || fire_time.tv_sec < soonest.value().tv_sec || (fire_time.tv_sec == soonest.value().tv_sec && fire_time.tv_usec < soonest.value().tv_usec))
             soonest = fire_time;
-        has_checked_any = true;
     }
+    return soonest;
 }
 
 int EventLoop::register_timer(Object& object, int milliseconds, bool should_reload, TimerShouldFireWhenNotVisible fire_when_not_visible)
@@ -559,8 +721,8 @@ void EventLoop::unregister_notifier(Badge<Notifier>, Notifier& notifier)
 
 void EventLoop::wake()
 {
-    char ch = '!';
-    int nwritten = write(s_wake_pipe_fds[1], &ch, 1);
+    int wake_event = 0;
+    int nwritten = write(s_wake_pipe_fds[1], &wake_event, sizeof(wake_event));
     if (nwritten < 0) {
         perror("EventLoop::wake: write");
         ASSERT_NOT_REACHED();

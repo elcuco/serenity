@@ -81,88 +81,92 @@ public:
 
     Palette palette() const { return Palette(*m_palette); }
 
-    RefPtr<Core::ConfigFile> wm_config() const
-    {
-        return m_wm_config;
-    }
+    RefPtr<Core::ConfigFile> config() const { return m_config; }
     void reload_config(bool);
 
     void add_window(Window&);
     void remove_window(Window&);
 
     void notify_title_changed(Window&);
-    void notify_rect_changed(Window&, const Gfx::Rect& oldRect, const Gfx::Rect& newRect);
+    void notify_modal_unparented(Window&);
+    void notify_rect_changed(Window&, const Gfx::IntRect& oldRect, const Gfx::IntRect& newRect);
     void notify_minimization_state_changed(Window&);
     void notify_opacity_changed(Window&);
     void notify_occlusion_state_changed(Window&);
+    void notify_progress_changed(Window&);
     void notify_client_changed_app_menubar(ClientConnection&);
 
-    Gfx::Rect maximized_window_rect(const Window&) const;
+    Gfx::IntRect maximized_window_rect(const Window&) const;
 
-    ClientConnection* dnd_client() { return m_dnd_client.ptr(); }
+    const ClientConnection* dnd_client() const { return m_dnd_client.ptr(); }
     const String& dnd_text() const { return m_dnd_text; }
     const String& dnd_data_type() const { return m_dnd_data_type; }
     const String& dnd_data() const { return m_dnd_data; }
     const Gfx::Bitmap* dnd_bitmap() const { return m_dnd_bitmap; }
-    Gfx::Rect dnd_rect() const;
+    Gfx::IntRect dnd_rect() const;
 
     void start_dnd_drag(ClientConnection&, const String& text, Gfx::Bitmap*, const String& data_type, const String& data);
     void end_dnd_drag();
 
     Window* active_window() { return m_active_window.ptr(); }
+    const Window* active_window() const { return m_active_window.ptr(); }
+    Window* active_input_window() { return m_active_input_window.ptr(); }
+    const Window* active_input_window() const { return m_active_input_window.ptr(); }
     const ClientConnection* active_client() const;
-    bool active_window_is_modal() const { return m_active_window && m_active_window->is_modal(); }
 
-    Window* highlight_window() { return m_highlight_window.ptr(); }
+    const Window* highlight_window() const { return m_highlight_window.ptr(); }
     void set_highlight_window(Window*);
 
     void move_to_front_and_make_active(Window&);
 
-    Gfx::Rect menubar_rect() const;
-    Gfx::Rect desktop_rect() const;
+    Gfx::IntRect menubar_rect() const;
+    Gfx::IntRect desktop_rect() const;
 
     const Cursor& active_cursor() const;
     const Cursor& arrow_cursor() const { return *m_arrow_cursor; }
     const Cursor& hand_cursor() const { return *m_hand_cursor; }
+    const Cursor& help_cursor() const { return *m_help_cursor; }
     const Cursor& resize_horizontally_cursor() const { return *m_resize_horizontally_cursor; }
     const Cursor& resize_vertically_cursor() const { return *m_resize_vertically_cursor; }
     const Cursor& resize_diagonally_tlbr_cursor() const { return *m_resize_diagonally_tlbr_cursor; }
     const Cursor& resize_diagonally_bltr_cursor() const { return *m_resize_diagonally_bltr_cursor; }
+    const Cursor& resize_column_cursor() const { return *m_resize_column_cursor; }
+    const Cursor& resize_row_cursor() const { return *m_resize_row_cursor; }
     const Cursor& i_beam_cursor() const { return *m_i_beam_cursor; }
     const Cursor& disallowed_cursor() const { return *m_disallowed_cursor; }
     const Cursor& move_cursor() const { return *m_move_cursor; }
     const Cursor& drag_cursor() const { return *m_drag_cursor; }
+    const Cursor& wait_cursor() const { return *m_wait_cursor; }
 
-    void invalidate(const Window&);
-    void invalidate(const Window&, const Gfx::Rect&);
-    void invalidate(const Gfx::Rect&);
+    void invalidate(const Gfx::IntRect&);
     void invalidate();
-    void flush(const Gfx::Rect&);
+    void flush(const Gfx::IntRect&);
 
     const Gfx::Font& font() const;
     const Gfx::Font& window_title_font() const;
 
     bool set_resolution(int width, int height);
-    Gfx::Size resolution() const;
+    Gfx::IntSize resolution() const;
 
-    void set_active_window(Window*);
+    Window* set_active_input_window(Window*);
+    void restore_active_input_window(Window*);
+    void set_active_window(Window*, bool make_input = true);
     void set_hovered_button(Button*);
 
-    Button* cursor_tracking_button() { return m_cursor_tracking_button.ptr(); }
+    const Button* cursor_tracking_button() const { return m_cursor_tracking_button.ptr(); }
     void set_cursor_tracking_button(Button*);
 
     void set_resize_candidate(Window&, ResizeDirection);
     void clear_resize_candidate();
     ResizeDirection resize_direction_of_window(const Window&);
 
-    bool any_opaque_window_contains_rect(const Gfx::Rect&);
-    bool any_opaque_window_above_this_one_contains_rect(const Window&, const Gfx::Rect&);
-
     void tell_wm_listeners_window_state_changed(Window&);
     void tell_wm_listeners_window_icon_changed(Window&);
     void tell_wm_listeners_window_rect_changed(Window&);
 
-    void start_window_resize(Window&, const Gfx::Point&, MouseButton);
+    bool is_active_window_or_accessory(Window&) const;
+
+    void start_window_resize(Window&, const Gfx::IntPoint&, MouseButton);
     void start_window_resize(Window&, const MouseEvent&);
 
     const Window* active_fullscreen_window() const { return (m_active_window && m_active_window->is_fullscreen()) ? m_active_window : nullptr; }
@@ -175,9 +179,42 @@ public:
 
     void did_popup_a_menu(Badge<Menu>);
 
+    void start_menu_doubleclick(Window& window, const MouseEvent& event);
+    bool is_menu_doubleclick(Window& window, const MouseEvent& event) const;
+
+    void minimize_windows(Window&, bool);
+    void maximize_windows(Window&, bool);
+
+    template<typename Function>
+    void for_each_window_in_modal_stack(Window& window, Function f)
+    {
+        auto* blocking_modal_window = window.is_blocked_by_modal_window();
+        if (blocking_modal_window || window.is_modal()) {
+            Vector<Window*> modal_stack;
+            auto* modal_stack_top = blocking_modal_window ? blocking_modal_window : &window;
+            for (auto* parent = modal_stack_top->parent_window(); parent; parent = parent->parent_window()) {
+                auto* blocked_by = parent->is_blocked_by_modal_window();
+                if (!blocked_by || (blocked_by != modal_stack_top && !modal_stack_top->is_descendant_of(*blocked_by)))
+                    break;
+                modal_stack.append(parent);
+                if (!parent->is_modal())
+                    break;
+            }
+            if (!modal_stack.is_empty()) {
+                for (size_t i = modal_stack.size(); i > 0; i--) {
+                    f(*modal_stack[i - 1], false);
+                }
+            }
+            f(*modal_stack_top, true);
+        } else {
+            // Not a modal window stack, just "iterate" over this window
+            f(window, true);
+        }
+    }
+
 private:
     NonnullRefPtr<Cursor> get_cursor(const String& name);
-    NonnullRefPtr<Cursor> get_cursor(const String& name, const Gfx::Point& hotspot);
+    NonnullRefPtr<Cursor> get_cursor(const String& name, const Gfx::IntPoint& hotspot);
 
     void process_mouse_event(MouseEvent&, Window*& hovered_window);
     void process_event_for_doubleclick(Window& window, MouseEvent& event);
@@ -205,29 +242,34 @@ private:
     void tell_wm_listener_about_window(Window& listener, Window&);
     void tell_wm_listener_about_window_icon(Window& listener, Window&);
     void tell_wm_listener_about_window_rect(Window& listener, Window&);
-    void pick_new_active_window();
+    bool pick_new_active_window(Window*);
 
-    void recompute_occlusions();
+    void do_move_to_front(Window&, bool, bool);
 
     RefPtr<Cursor> m_arrow_cursor;
     RefPtr<Cursor> m_hand_cursor;
+    RefPtr<Cursor> m_help_cursor;
     RefPtr<Cursor> m_resize_horizontally_cursor;
     RefPtr<Cursor> m_resize_vertically_cursor;
     RefPtr<Cursor> m_resize_diagonally_tlbr_cursor;
     RefPtr<Cursor> m_resize_diagonally_bltr_cursor;
+    RefPtr<Cursor> m_resize_column_cursor;
+    RefPtr<Cursor> m_resize_row_cursor;
     RefPtr<Cursor> m_i_beam_cursor;
     RefPtr<Cursor> m_disallowed_cursor;
     RefPtr<Cursor> m_move_cursor;
     RefPtr<Cursor> m_drag_cursor;
+    RefPtr<Cursor> m_wait_cursor;
 
     InlineLinkedList<Window> m_windows_in_order;
 
     struct DoubleClickInfo {
         struct ClickMetadata {
             Core::ElapsedTimer clock;
-            Gfx::Point last_position;
+            Gfx::IntPoint last_position;
         };
 
+        const ClickMetadata& metadata_for_button(MouseButton) const;
         ClickMetadata& metadata_for_button(MouseButton);
 
         void reset()
@@ -248,6 +290,9 @@ private:
         ClickMetadata m_back;
         ClickMetadata m_forward;
     };
+
+    bool is_considered_doubleclick(const MouseEvent& event, const DoubleClickInfo::ClickMetadata& metadata) const;
+
     DoubleClickInfo m_double_click_info;
     int m_double_click_speed { 0 };
     int m_max_distance_for_double_click { 4 };
@@ -256,19 +301,18 @@ private:
     WeakPtr<Window> m_hovered_window;
     WeakPtr<Window> m_highlight_window;
     WeakPtr<Window> m_active_input_window;
+    WeakPtr<Window> m_active_input_tracking_window;
 
     WeakPtr<Window> m_move_window;
-    Gfx::Point m_move_origin;
-    Gfx::Point m_move_window_origin;
+    Gfx::IntPoint m_move_origin;
+    Gfx::IntPoint m_move_window_origin;
 
     WeakPtr<Window> m_resize_window;
     WeakPtr<Window> m_resize_candidate;
     MouseButton m_resizing_mouse_button { MouseButton::None };
-    Gfx::Rect m_resize_window_original_rect;
-    Gfx::Point m_resize_origin;
+    Gfx::IntRect m_resize_window_original_rect;
+    Gfx::IntPoint m_resize_origin;
     ResizeDirection m_resize_direction { ResizeDirection::None };
-
-    bool m_moved_or_resized_since_logo_keydown { false };
 
     u8 m_keyboard_modifiers { 0 };
 
@@ -279,7 +323,7 @@ private:
 
     NonnullRefPtr<Gfx::PaletteImpl> m_palette;
 
-    RefPtr<Core::ConfigFile> m_wm_config;
+    RefPtr<Core::ConfigFile> m_config;
 
     WeakPtr<ClientConnection> m_dnd_client;
     String m_dnd_text;

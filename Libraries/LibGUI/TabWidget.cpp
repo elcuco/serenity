@@ -84,9 +84,9 @@ void TabWidget::resize_event(ResizeEvent& event)
     m_active_widget->set_relative_rect(child_rect_for_size(event.size()));
 }
 
-Gfx::Rect TabWidget::child_rect_for_size(const Gfx::Size& size) const
+Gfx::IntRect TabWidget::child_rect_for_size(const Gfx::IntSize& size) const
 {
-    Gfx::Rect rect;
+    Gfx::IntRect rect;
     switch (m_tab_position) {
     case TabPosition::Top:
         rect = { { container_padding(), bar_height() + container_padding() }, { size.width() - container_padding() * 2, size.height() - bar_height() - container_padding() * 2 } };
@@ -123,7 +123,7 @@ void TabWidget::child_event(Core::ChildEvent& event)
     Widget::child_event(event);
 }
 
-Gfx::Rect TabWidget::bar_rect() const
+Gfx::IntRect TabWidget::bar_rect() const
 {
     switch (m_tab_position) {
     case TabPosition::Top:
@@ -134,7 +134,7 @@ Gfx::Rect TabWidget::bar_rect() const
     ASSERT_NOT_REACHED();
 }
 
-Gfx::Rect TabWidget::container_rect() const
+Gfx::IntRect TabWidget::container_rect() const
 {
     switch (m_tab_position) {
     case TabPosition::Top:
@@ -147,6 +147,9 @@ Gfx::Rect TabWidget::container_rect() const
 
 void TabWidget::paint_event(PaintEvent& event)
 {
+    if (!m_bar_visible)
+        return;
+
     Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
@@ -163,7 +166,7 @@ void TabWidget::paint_event(PaintEvent& event)
     auto paint_tab_icon_if_needed = [&](auto& icon, auto& button_rect, auto& text_rect) {
         if (!icon)
             return;
-        Gfx::Rect icon_rect { button_rect.x(), button_rect.y(), 16, 16 };
+        Gfx::IntRect icon_rect { button_rect.x(), button_rect.y(), 16, 16 };
         icon_rect.move_by(4, 3);
         painter.draw_scaled_bitmap(icon_rect, *icon, icon->rect());
         text_rect.set_x(icon_rect.right() + 1 + 4);
@@ -206,14 +209,22 @@ int TabWidget::uniform_tab_width() const
     return max(tab_width, minimum_tab_width);
 }
 
-Gfx::Rect TabWidget::button_rect(int index) const
+void TabWidget::set_bar_visible(bool bar_visible)
+{
+    m_bar_visible = bar_visible;
+    if (m_active_widget)
+        m_active_widget->set_relative_rect(child_rect_for_size(size()));
+    update_bar();
+}
+
+Gfx::IntRect TabWidget::button_rect(int index) const
 {
     int x_offset = 2;
     for (int i = 0; i < index; ++i) {
         auto tab_width = m_uniform_tabs ? uniform_tab_width() : m_tabs[i].width(font());
         x_offset += tab_width;
     }
-    Gfx::Rect rect { x_offset, 0, m_uniform_tabs ? uniform_tab_width() : m_tabs[index].width(font()), bar_height() };
+    Gfx::IntRect rect { x_offset, 0, m_uniform_tabs ? uniform_tab_width() : m_tabs[index].width(font()), bar_height() };
     if (m_tabs[index].widget != m_active_widget) {
         rect.move_by(0, 2);
         rect.set_height(rect.height() - 2);
@@ -346,7 +357,7 @@ void TabWidget::activate_previous_tab()
     set_active_widget(m_tabs.at(index).widget);
 }
 
-void TabWidget::keydown_event(KeyEvent & event)
+void TabWidget::keydown_event(KeyEvent& event)
 {
     if (event.ctrl() && event.key() == Key_Tab) {
         if (event.shift())
@@ -357,6 +368,21 @@ void TabWidget::keydown_event(KeyEvent & event)
         return;
     }
     Widget::keydown_event(event);
+}
+
+void TabWidget::context_menu_event(ContextMenuEvent& context_menu_event)
+{
+    for (size_t i = 0; i < m_tabs.size(); ++i) {
+        auto button_rect = this->button_rect(i);
+        if (!button_rect.contains(context_menu_event.position()))
+            continue;
+        auto* widget = m_tabs[i].widget;
+        deferred_invoke([this, widget, context_menu_event](auto&) {
+            if (on_context_menu_request && widget)
+                on_context_menu_request(*widget, context_menu_event);
+        });
+        return;
+    }
 }
 
 }

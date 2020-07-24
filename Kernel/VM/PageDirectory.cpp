@@ -48,7 +48,7 @@ static HashMap<u32, PageDirectory*>& cr3_map()
 
 RefPtr<PageDirectory> PageDirectory::find_by_cr3(u32 cr3)
 {
-    InterruptDisabler disabler;
+    ScopedSpinLock lock(s_mm_lock);
     return cr3_map().get(cr3).value_or({});
 }
 
@@ -59,6 +59,7 @@ extern "C" PageDirectoryEntry boot_pd3[1024];
 PageDirectory::PageDirectory()
 {
     m_range_allocator.initialize_with_range(VirtualAddress(0xc0800000), 0x3f000000);
+    m_identity_range_allocator.initialize_with_range(VirtualAddress(FlatPtr(0x00000000)), 0x00200000);
 
     // Adopt the page tables already set up by boot.S
     PhysicalAddress boot_pdpt_paddr(virtual_to_low_physical((FlatPtr)boot_pdpt));
@@ -75,10 +76,11 @@ PageDirectory::PageDirectory()
 PageDirectory::PageDirectory(Process& process, const RangeAllocator* parent_range_allocator)
     : m_process(&process)
 {
+    ScopedSpinLock lock(s_mm_lock);
     if (parent_range_allocator) {
         m_range_allocator.initialize_from_parent(*parent_range_allocator);
     } else {
-        size_t random_offset = (get_good_random<u32>() % 32 * MB) & PAGE_MASK;
+        size_t random_offset = (get_fast_random<u32>() % 32 * MB) & PAGE_MASK;
         u32 base = userspace_range_base + random_offset;
         m_range_allocator.initialize_with_range(VirtualAddress(base), userspace_range_ceiling - base);
     }
@@ -92,7 +94,6 @@ PageDirectory::PageDirectory(Process& process, const RangeAllocator* parent_rang
     m_directory_pages[3] = MM.kernel_page_directory().m_directory_pages[3];
 
     {
-        InterruptDisabler disabler;
         auto& table = *(PageDirectoryPointerTable*)MM.quickmap_page(*m_directory_table);
         table.raw[0] = (u64)m_directory_pages[0]->paddr().as_ptr() | 1;
         table.raw[1] = (u64)m_directory_pages[1]->paddr().as_ptr() | 1;
@@ -108,7 +109,6 @@ PageDirectory::PageDirectory(Process& process, const RangeAllocator* parent_rang
     auto* new_pd = MM.quickmap_pd(*this, 0);
     memcpy(new_pd, &buffer, sizeof(PageDirectoryEntry));
 
-    InterruptDisabler disabler;
     cr3_map().set(cr3(), this);
 }
 
@@ -117,7 +117,7 @@ PageDirectory::~PageDirectory()
 #ifdef MM_DEBUG
     dbg() << "MM: ~PageDirectory K" << this;
 #endif
-    InterruptDisabler disabler;
+    ScopedSpinLock lock(s_mm_lock);
     cr3_map().remove(cr3());
 }
 

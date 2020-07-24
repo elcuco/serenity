@@ -26,21 +26,23 @@
 
 #pragma once
 
+#include <AK/Checked.h>
 #include <AK/FixedArray.h>
 #include <AK/HashMap.h>
 #include <AK/InlineLinkedList.h>
 #include <AK/NonnullOwnPtrVector.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
+#include <Kernel/API/Syscall.h>
 #include <Kernel/FileSystem/InodeMetadata.h>
 #include <Kernel/Forward.h>
 #include <Kernel/Lock.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/StdLib.h>
 #include <Kernel/Thread.h>
 #include <Kernel/UnixTypes.h>
 #include <Kernel/VM/RangeAllocator.h>
-#include <LibBareMetal/StdLib.h>
 #include <LibC/signal_numbers.h>
+#include <LibELF/AuxiliaryVector.h>
 
 namespace ELF {
 class Loader;
@@ -53,25 +55,29 @@ void kgettimeofday(timeval&);
 
 extern VirtualAddress g_return_to_ring3_from_signal_trampoline;
 
-#define ENUMERATE_PLEDGE_PROMISES       \
-    __ENUMERATE_PLEDGE_PROMISE(stdio)   \
-    __ENUMERATE_PLEDGE_PROMISE(rpath)   \
-    __ENUMERATE_PLEDGE_PROMISE(wpath)   \
-    __ENUMERATE_PLEDGE_PROMISE(cpath)   \
-    __ENUMERATE_PLEDGE_PROMISE(dpath)   \
-    __ENUMERATE_PLEDGE_PROMISE(inet)    \
-    __ENUMERATE_PLEDGE_PROMISE(id)      \
-    __ENUMERATE_PLEDGE_PROMISE(proc)    \
-    __ENUMERATE_PLEDGE_PROMISE(exec)    \
-    __ENUMERATE_PLEDGE_PROMISE(unix)    \
-    __ENUMERATE_PLEDGE_PROMISE(fattr)   \
-    __ENUMERATE_PLEDGE_PROMISE(tty)     \
-    __ENUMERATE_PLEDGE_PROMISE(chown)   \
-    __ENUMERATE_PLEDGE_PROMISE(chroot)  \
-    __ENUMERATE_PLEDGE_PROMISE(thread)  \
-    __ENUMERATE_PLEDGE_PROMISE(video)   \
-    __ENUMERATE_PLEDGE_PROMISE(accept)  \
-    __ENUMERATE_PLEDGE_PROMISE(settime) \
+#define ENUMERATE_PLEDGE_PROMISES         \
+    __ENUMERATE_PLEDGE_PROMISE(stdio)     \
+    __ENUMERATE_PLEDGE_PROMISE(rpath)     \
+    __ENUMERATE_PLEDGE_PROMISE(wpath)     \
+    __ENUMERATE_PLEDGE_PROMISE(cpath)     \
+    __ENUMERATE_PLEDGE_PROMISE(dpath)     \
+    __ENUMERATE_PLEDGE_PROMISE(inet)      \
+    __ENUMERATE_PLEDGE_PROMISE(id)        \
+    __ENUMERATE_PLEDGE_PROMISE(proc)      \
+    __ENUMERATE_PLEDGE_PROMISE(exec)      \
+    __ENUMERATE_PLEDGE_PROMISE(unix)      \
+    __ENUMERATE_PLEDGE_PROMISE(recvfd)    \
+    __ENUMERATE_PLEDGE_PROMISE(sendfd)    \
+    __ENUMERATE_PLEDGE_PROMISE(fattr)     \
+    __ENUMERATE_PLEDGE_PROMISE(tty)       \
+    __ENUMERATE_PLEDGE_PROMISE(chown)     \
+    __ENUMERATE_PLEDGE_PROMISE(chroot)    \
+    __ENUMERATE_PLEDGE_PROMISE(thread)    \
+    __ENUMERATE_PLEDGE_PROMISE(video)     \
+    __ENUMERATE_PLEDGE_PROMISE(accept)    \
+    __ENUMERATE_PLEDGE_PROMISE(settime)   \
+    __ENUMERATE_PLEDGE_PROMISE(sigaction) \
+    __ENUMERATE_PLEDGE_PROMISE(setkeymap) \
     __ENUMERATE_PLEDGE_PROMISE(shared_buffer)
 
 enum class Pledge : u32 {
@@ -106,14 +112,20 @@ class Process : public InlineLinkedListNode<Process> {
     friend class Thread;
 
 public:
-    static Process* current;
+    inline static Process* current()
+    {
+        auto current_thread = Processor::current().current_thread();
+        return current_thread ? &current_thread->process() : nullptr;
+    }
 
-    static Process* create_kernel_process(Thread*& first_thread, String&& name, void (*entry)());
+    static Process* create_kernel_process(Thread*& first_thread, String&& name, void (*entry)(), u32 affinity = THREAD_AFFINITY_DEFAULT);
     static Process* create_user_process(Thread*& first_thread, const String& path, uid_t, gid_t, pid_t ppid, int& error, Vector<String>&& arguments = Vector<String>(), Vector<String>&& environment = Vector<String>(), TTY* = nullptr);
     ~Process();
 
     static Vector<pid_t> all_pids();
     static Vector<Process*> all_processes();
+
+    Thread* create_kernel_thread(void (*entry)(), u32 priority, const String& name, u32 affinity = THREAD_AFFINITY_DEFAULT, bool joinable = true);
 
     bool is_profiling() const { return m_profiling; }
     void set_profiling(bool profiling) { m_profiling = profiling; }
@@ -135,17 +147,17 @@ public:
 
     static Process* from_pid(pid_t);
 
-    static void update_info_page_timestamp(const timeval&);
-
     const String& name() const { return m_name; }
     pid_t pid() const { return m_pid; }
     pid_t sid() const { return m_sid; }
     pid_t pgid() const { return m_pgid; }
-    uid_t uid() const { return m_uid; }
-    gid_t gid() const { return m_gid; }
     const FixedArray<gid_t>& extra_gids() const { return m_extra_gids; }
     uid_t euid() const { return m_euid; }
     gid_t egid() const { return m_egid; }
+    uid_t uid() const { return m_uid; }
+    gid_t gid() const { return m_gid; }
+    uid_t suid() const { return m_suid; }
+    gid_t sgid() const { return m_sgid; }
     pid_t ppid() const { return m_ppid; }
 
     pid_t exec_tid() const { return m_exec_tid; }
@@ -191,6 +203,8 @@ public:
     gid_t sys$getegid();
     pid_t sys$getpid();
     pid_t sys$getppid();
+    int sys$getresuid(uid_t*, uid_t*, uid_t*);
+    int sys$getresgid(gid_t*, gid_t*, gid_t*);
     mode_t sys$umask(mode_t);
     int sys$open(const Syscall::SC_open_params*);
     int sys$close(int fd);
@@ -212,7 +226,7 @@ public:
     int sys$minherit(void*, size_t, int inherit);
     int sys$purge(int mode);
     int sys$select(const Syscall::SC_select_params*);
-    int sys$poll(pollfd*, int nfds, int timeout);
+    int sys$poll(const Syscall::SC_poll_params*);
     ssize_t sys$get_dir_entries(int fd, void*, ssize_t);
     int sys$getcwd(char*, ssize_t);
     int sys$chdir(const char*, size_t);
@@ -231,7 +245,6 @@ public:
     int sys$ptsname_r(int fd, char*, ssize_t);
     pid_t sys$fork(RegisterState&);
     int sys$execve(const Syscall::SC_execve_params*);
-    int sys$getdtablesize();
     int sys$dup(int oldfd);
     int sys$dup2(int oldfd, int newfd);
     int sys$sigaction(int signum, const sigaction* act, sigaction* old_act);
@@ -241,12 +254,16 @@ public:
     int sys$setgroups(ssize_t, const gid_t*);
     int sys$pipe(int pipefd[2], int flags);
     int sys$killpg(int pgrp, int sig);
-    int sys$setgid(gid_t);
+    int sys$seteuid(uid_t);
+    int sys$setegid(gid_t);
     int sys$setuid(uid_t);
+    int sys$setgid(gid_t);
+    int sys$setresuid(uid_t, uid_t, uid_t);
+    int sys$setresgid(gid_t, gid_t, gid_t);
     unsigned sys$alarm(unsigned seconds);
     int sys$access(const char* pathname, size_t path_length, int mode);
     int sys$fcntl(int fd, int cmd, u32 extra_arg);
-    int sys$ioctl(int fd, unsigned request, unsigned arg);
+    int sys$ioctl(int fd, unsigned request, FlatPtr arg);
     int sys$mkdir(const char* pathname, size_t path_length, mode_t mode);
     clock_t sys$times(tms*);
     int sys$utime(const char* pathname, size_t path_length, const struct utimbuf*);
@@ -299,7 +316,6 @@ public:
     int sys$module_unload(const char* name, size_t name_length);
     int sys$profiling_enable(pid_t);
     int sys$profiling_disable(pid_t);
-    void* sys$get_kernel_info_page();
     int sys$futex(const Syscall::SC_futex_params*);
     int sys$set_thread_boost(int tid, int amount);
     int sys$set_process_boost(pid_t, int amount);
@@ -309,6 +325,9 @@ public:
     int sys$perf_event(int type, FlatPtr arg1, FlatPtr arg2);
     int sys$get_stack_bounds(FlatPtr* stack_base, size_t* stack_size);
     int sys$ptrace(const Syscall::SC_ptrace_params*);
+    int sys$sendfd(int sockfd, int fd);
+    int sys$recvfd(int sockfd);
+    long sys$sysconf(int name);
 
     template<bool sockname, typename Params>
     int get_sock_or_peer_name(const Params&);
@@ -335,8 +354,17 @@ public:
 
     [[nodiscard]] bool validate_read(const void*, size_t) const;
     [[nodiscard]] bool validate_write(void*, size_t) const;
+
     template<typename T>
-    [[nodiscard]] bool validate_read_typed(T* value, size_t count = 1) { return validate_read(value, sizeof(T) * count); }
+    [[nodiscard]] bool validate_read_typed(T* value, size_t count = 1)
+    {
+        Checked size = sizeof(T);
+        size *= count;
+        if (size.has_overflow())
+            return false;
+        return validate_read(value, size.value());
+    }
+
     template<typename T>
     [[nodiscard]] bool validate_read_and_copy_typed(T* dest, const T* src)
     {
@@ -346,8 +374,17 @@ public:
         }
         return validated;
     }
+
     template<typename T>
-    [[nodiscard]] bool validate_write_typed(T* value, size_t count = 1) { return validate_write(value, sizeof(T) * count); }
+    [[nodiscard]] bool validate_write_typed(T* value, size_t count = 1)
+    {
+        Checked size = sizeof(T);
+        size *= count;
+        if (size.has_overflow())
+            return false;
+        return validate_write(value, size.value());
+    }
+
     template<typename DataType, typename SizeType>
     [[nodiscard]] bool validate(const Syscall::MutableBufferArgument<DataType, SizeType>&);
     template<typename DataType, typename SizeType>
@@ -386,11 +423,9 @@ public:
     bool is_being_inspected() const { return m_inspector_count; }
 
     void terminate_due_to_signal(u8 signal);
-    void send_signal(u8, Process* sender);
+    KResult send_signal(u8 signal, Process* sender);
 
-    u16 thread_count() const { return m_thread_count; }
-
-    Thread& any_thread();
+    u16 thread_count() const { return m_thread_count.load(AK::MemoryOrder::memory_order_consume); }
 
     Lock& big_lock() { return m_big_lock; }
 
@@ -417,6 +452,7 @@ public:
     void increment_inspector_count(Badge<ProcessInspectionHandle>) { ++m_inspector_count; }
     void decrement_inspector_count(Badge<ProcessInspectionHandle>) { --m_inspector_count; }
 
+    bool wait_for_tracer_at_next_execve() const { return m_wait_for_tracer_at_next_execve; }
     void set_wait_for_tracer_at_next_execve(bool val) { m_wait_for_tracer_at_next_execve = val; }
 
     KResultOr<u32> peek_user_data(u32* address);
@@ -437,10 +473,11 @@ private:
     void kill_threads_except_self();
     void kill_all_threads();
 
-    int do_exec(NonnullRefPtr<FileDescription> main_program_description, Vector<String> arguments, Vector<String> environment, RefPtr<FileDescription> interpreter_description);
+    int do_exec(NonnullRefPtr<FileDescription> main_program_description, Vector<String> arguments, Vector<String> environment, RefPtr<FileDescription> interpreter_description, Thread*& new_main_thread, u32& prev_flags);
     ssize_t do_write(FileDescription&, const u8*, int data_size);
 
     KResultOr<NonnullRefPtr<FileDescription>> find_elf_interpreter_for_executable(const String& path, char (&first_page)[PAGE_SIZE], int nread, size_t file_size);
+    Vector<AuxiliaryValue> generate_auxiliary_vector() const;
 
     int alloc_fd(int first_candidate_fd = 0);
     void disown_all_shared_buffers();
@@ -465,14 +502,19 @@ private:
     String m_name;
 
     pid_t m_pid { 0 };
-    uid_t m_uid { 0 };
-    gid_t m_gid { 0 };
-    uid_t m_euid { 0 };
-    gid_t m_egid { 0 };
     pid_t m_sid { 0 };
     pid_t m_pgid { 0 };
 
+    uid_t m_euid { 0 };
+    gid_t m_egid { 0 };
+    uid_t m_uid { 0 };
+    gid_t m_gid { 0 };
+    uid_t m_suid { 0 };
+    gid_t m_sgid { 0 };
+
     pid_t m_exec_tid { 0 };
+    FlatPtr m_load_offset { 0U };
+    FlatPtr m_entry_eip { 0U };
 
     static const int m_max_open_file_descriptors { FD_SETSIZE };
 
@@ -488,7 +530,7 @@ private:
     RingLevel m_ring { Ring0 };
     u8 m_termination_status { 0 };
     u8 m_termination_signal { 0 };
-    u16 m_thread_count { 0 };
+    Atomic<u16> m_thread_count { 0 };
 
     bool m_dead { false };
     bool m_profiling { false };
@@ -520,6 +562,7 @@ private:
     size_t m_master_tls_alignment { 0 };
 
     Lock m_big_lock { "Process" };
+    SpinLock<u32> m_lock;
 
     u64 m_alarm_deadline { 0 };
 
@@ -551,14 +594,14 @@ public:
     ProcessInspectionHandle(Process& process)
         : m_process(process)
     {
-        if (&process != Process::current) {
+        if (&process != Process::current()) {
             InterruptDisabler disabler;
             m_process.increment_inspector_count({});
         }
     }
     ~ProcessInspectionHandle()
     {
-        if (&m_process != Process::current) {
+        if (&m_process != Process::current()) {
             InterruptDisabler disabler;
             m_process.decrement_inspector_count({});
         }
@@ -583,11 +626,13 @@ private:
 };
 
 extern InlineLinkedList<Process>* g_processes;
+extern RecursiveSpinLock g_processes_lock;
 
 template<typename Callback>
 inline void Process::for_each(Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ScopedSpinLock lock(g_processes_lock);
     for (auto* process = g_processes->head(); process;) {
         auto* next_process = process->next();
         if (callback(*process) == IterationDecision::Break)
@@ -601,6 +646,7 @@ inline void Process::for_each_child(Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
     pid_t my_pid = pid();
+    ScopedSpinLock lock(g_processes_lock);
     for (auto* process = g_processes->head(); process;) {
         auto* next_process = process->next();
         if (process->ppid() == my_pid || process->has_tracee_thread(m_pid)) {
@@ -619,7 +665,13 @@ inline void Process::for_each_thread(Callback callback) const
 
     if (my_pid == 0) {
         // NOTE: Special case the colonel process, since its main thread is not in the global thread table.
-        callback(*g_colonel);
+        Processor::for_each(
+            [&](Processor& proc) -> IterationDecision {
+                auto idle_thread = proc.idle_thread();
+                if (idle_thread != nullptr)
+                    return callback(*idle_thread);
+                return IterationDecision::Continue;
+            });
         return;
     }
 
@@ -635,6 +687,7 @@ template<typename Callback>
 inline void Process::for_each_in_pgrp(pid_t pgid, Callback callback)
 {
     ASSERT_INTERRUPTS_DISABLED();
+    ScopedSpinLock lock(g_processes_lock);
     for (auto* process = g_processes->head(); process;) {
         auto* next_process = process->next();
         if (!process->is_dead() && process->pgid() == pgid) {
@@ -675,25 +728,25 @@ inline u32 Thread::effective_priority() const
     return m_priority + m_process.priority_boost() + m_priority_boost + m_extra_priority;
 }
 
-#define REQUIRE_NO_PROMISES                      \
-    do {                                         \
-        if (Process::current->has_promises()) {  \
-            dbg() << "Has made a promise";       \
-            cli();                               \
-            Process::current->crash(SIGABRT, 0); \
-            ASSERT_NOT_REACHED();                \
-        }                                        \
+#define REQUIRE_NO_PROMISES                        \
+    do {                                           \
+        if (Process::current()->has_promises()) {  \
+            dbg() << "Has made a promise";         \
+            cli();                                 \
+            Process::current()->crash(SIGABRT, 0); \
+            ASSERT_NOT_REACHED();                  \
+        }                                          \
     } while (0)
 
-#define REQUIRE_PROMISE(promise)                                   \
-    do {                                                           \
-        if (Process::current->has_promises()                       \
-            && !Process::current->has_promised(Pledge::promise)) { \
-            dbg() << "Has not pledged " << #promise;               \
-            cli();                                                 \
-            Process::current->crash(SIGABRT, 0);                   \
-            ASSERT_NOT_REACHED();                                  \
-        }                                                          \
+#define REQUIRE_PROMISE(promise)                                     \
+    do {                                                             \
+        if (Process::current()->has_promises()                       \
+            && !Process::current()->has_promised(Pledge::promise)) { \
+            dbg() << "Has not pledged " << #promise;                 \
+            cli();                                                   \
+            Process::current()->crash(SIGABRT, 0);                   \
+            ASSERT_NOT_REACHED();                                    \
+        }                                                            \
     } while (0)
 
 }

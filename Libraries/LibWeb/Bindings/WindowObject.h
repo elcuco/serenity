@@ -26,13 +26,16 @@
 
 #pragma once
 
+#include <AK/Weakable.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibWeb/Forward.h>
 
 namespace Web {
 namespace Bindings {
 
-class WindowObject final : public JS::GlobalObject {
+class WindowObject final
+    : public JS::GlobalObject
+    , public Weakable<WindowObject> {
 public:
     explicit WindowObject(Window&);
     virtual void initialize() override;
@@ -48,15 +51,19 @@ private:
     virtual const char* class_name() const override { return "WindowObject"; }
     virtual void visit_children(Visitor&) override;
 
-    static JS::Value document_getter(JS::Interpreter&);
-    static void document_setter(JS::Interpreter&, JS::Value);
+    JS_DECLARE_NATIVE_GETTER(document_getter);
+    JS_DECLARE_NATIVE_SETTER(document_setter);
 
-    static JS::Value alert(JS::Interpreter&);
-    static JS::Value confirm(JS::Interpreter&);
-    static JS::Value set_interval(JS::Interpreter&);
-    static JS::Value set_timeout(JS::Interpreter&);
-    static JS::Value request_animation_frame(JS::Interpreter&);
-    static JS::Value cancel_animation_frame(JS::Interpreter&);
+    JS_DECLARE_NATIVE_FUNCTION(alert);
+    JS_DECLARE_NATIVE_FUNCTION(confirm);
+    JS_DECLARE_NATIVE_FUNCTION(set_interval);
+    JS_DECLARE_NATIVE_FUNCTION(set_timeout);
+    JS_DECLARE_NATIVE_FUNCTION(clear_interval);
+    JS_DECLARE_NATIVE_FUNCTION(clear_timeout);
+    JS_DECLARE_NATIVE_FUNCTION(request_animation_frame);
+    JS_DECLARE_NATIVE_FUNCTION(cancel_animation_frame);
+    JS_DECLARE_NATIVE_FUNCTION(atob);
+    JS_DECLARE_NATIVE_FUNCTION(btoa);
 
     NonnullRefPtr<Window> m_impl;
 

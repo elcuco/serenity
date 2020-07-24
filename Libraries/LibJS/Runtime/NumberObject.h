@@ -31,17 +31,20 @@
 namespace JS {
 
 class NumberObject : public Object {
+    JS_OBJECT(NumberObject, Object);
+
 public:
     static NumberObject* create(GlobalObject&, double);
 
     NumberObject(double, Object& prototype);
     virtual ~NumberObject() override;
 
+    virtual bool is_number_object() const override { return true; }
     virtual Value value_of() const override { return Value(m_value); }
 
-private:
-    virtual const char* class_name() const override { return "NumberObject"; }
+    double number() const { return m_value; }
 
+private:
     double m_value { 0 };
 };
 

@@ -32,6 +32,7 @@
 #include <AK/RefCounted.h>
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
+#include <Kernel/FileSystem/FIFO.h>
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/FileSystem/InodeIdentifier.h>
 #include <Kernel/FileSystem/InodeMetadata.h>
@@ -50,11 +51,11 @@ class Inode : public RefCounted<Inode>
 public:
     virtual ~Inode();
 
-    virtual void one_ref_left() {}
+    virtual void one_ref_left() { }
 
     FS& fs() { return m_fs; }
     const FS& fs() const { return m_fs; }
-    unsigned fsid() const;
+    unsigned fsid() const { return m_fs.fsid(); }
     unsigned index() const { return m_index; }
 
     size_t size() const { return metadata().size; }
@@ -66,13 +67,14 @@ public:
     InodeIdentifier identifier() const { return { fsid(), index() }; }
     virtual InodeMetadata metadata() const = 0;
 
-    ByteBuffer read_entire(FileDescription* = nullptr) const;
+    KResultOr<ByteBuffer> read_entire(FileDescription* = nullptr) const;
 
     virtual ssize_t read_bytes(off_t, ssize_t, u8* buffer, FileDescription*) const = 0;
-    virtual bool traverse_as_directory(Function<bool(const FS::DirectoryEntry&)>) const = 0;
+    virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntry&)>) const = 0;
     virtual RefPtr<Inode> lookup(StringView name) = 0;
     virtual ssize_t write_bytes(off_t, ssize_t, const u8* data, FileDescription*) = 0;
-    virtual KResult add_child(InodeIdentifier child_id, const StringView& name, mode_t) = 0;
+    virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) = 0;
+    virtual KResult add_child(Inode&, const StringView& name, mode_t) = 0;
     virtual KResult remove_child(const StringView& name) = 0;
     virtual size_t directory_entry_count() const = 0;
     virtual KResult chmod(mode_t) = 0;
@@ -110,6 +112,8 @@ public:
     void register_watcher(Badge<InodeWatcher>, InodeWatcher&);
     void unregister_watcher(Badge<InodeWatcher>, InodeWatcher&);
 
+    FIFO& fifo();
+
     // For InlineLinkedListNode.
     Inode* m_next { nullptr };
     Inode* m_prev { nullptr };
@@ -121,6 +125,9 @@ protected:
     void inode_size_changed(size_t old_size, size_t new_size);
     KResult prepare_to_write_data();
 
+    void did_add_child(const String& name);
+    void did_remove_child(const String& name);
+
     mutable Lock m_lock { "Inode" };
 
 private:
@@ -130,6 +137,7 @@ private:
     RefPtr<LocalSocket> m_socket;
     HashTable<InodeWatcher*> m_watchers;
     bool m_metadata_dirty { false };
+    RefPtr<FIFO> m_fifo;
 };
 
 }

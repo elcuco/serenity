@@ -24,6 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#pragma once
+
 namespace GUI {
 
 class AbstractButton;
@@ -36,10 +38,13 @@ class BoxLayout;
 class Button;
 class CheckBox;
 class Command;
+class DragEvent;
+class DropEvent;
 class FileSystemModel;
 class Frame;
 class GroupBox;
 class HorizontalBoxLayout;
+class HorizontalSlider;
 class IconView;
 class JsonArrayModel;
 class KeyEvent;
@@ -53,12 +58,15 @@ class Model;
 class ModelEditingDelegate;
 class ModelIndex;
 class MouseEvent;
+class MultiPaintEvent;
 class MultiView;
 class PaintEvent;
 class Painter;
 class ResizeCorner;
+class ResizeEvent;
 class ScrollBar;
 class Slider;
+class SortingProxyModel;
 class SpinBox;
 class Splitter;
 class StackWidget;
@@ -71,11 +79,13 @@ class TextDocument;
 class TextDocumentLine;
 class TextDocumentUndoCommand;
 class TextEditor;
-class TreeView;
+class ThemeChangeEvent;
 class ToolBar;
 class ToolBarContainer;
+class TreeView;
 class Variant;
 class VerticalBoxLayout;
+class VerticalSlider;
 class WMEvent;
 class Widget;
 class Window;

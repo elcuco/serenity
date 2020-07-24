@@ -31,6 +31,7 @@
 #include <AK/String.h>
 #include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/Forward.h>
+#include <Kernel/SpinLock.h>
 #include <Kernel/VM/PhysicalPage.h>
 #include <Kernel/VM/Region.h>
 #include <Kernel/VM/VMObject.h>
@@ -66,6 +67,13 @@ class SynthFSInode;
 
 #define MM Kernel::MemoryManager::the()
 
+struct MemoryManagerData {
+    SpinLock<u8> m_quickmap_in_use;
+    u32 m_quickmap_prev_flags;
+};
+
+extern RecursiveSpinLock s_mm_lock;
+
 class MemoryManager {
     AK_MAKE_ETERNAL
     friend class PageDirectory;
@@ -79,7 +87,12 @@ class MemoryManager {
 public:
     static MemoryManager& the();
 
-    static void initialize();
+    static void initialize(u32 cpu);
+    
+    static inline MemoryManagerData& get_data()
+    {
+        return Processor::current().get_mm_data();
+    }
 
     PageFaultResponse handle_page_fault(const PageFault&);
 
@@ -107,6 +120,7 @@ public:
     OwnPtr<Region> allocate_contiguous_kernel_region(size_t, const StringView& name, u8 access, bool user_accessible = false, bool cacheable = true);
     OwnPtr<Region> allocate_kernel_region(size_t, const StringView& name, u8 access, bool user_accessible = false, bool should_commit = true, bool cacheable = true);
     OwnPtr<Region> allocate_kernel_region(PhysicalAddress, size_t, const StringView& name, u8 access, bool user_accessible = false, bool cacheable = true);
+    OwnPtr<Region> allocate_kernel_region_identity(PhysicalAddress, size_t, const StringView& name, u8 access, bool user_accessible = false, bool cacheable = true);
     OwnPtr<Region> allocate_kernel_region_with_vmobject(VMObject&, size_t, const StringView& name, u8 access, bool user_accessible = false, bool cacheable = true);
     OwnPtr<Region> allocate_kernel_region_with_vmobject(const Range&, VMObject&, const StringView& name, u8 access, bool user_accessible = false, bool cacheable = true);
     OwnPtr<Region> allocate_user_accessible_kernel_region(size_t, const StringView& name, u8 access, bool cacheable = true);
@@ -143,6 +157,8 @@ public:
 
     PhysicalPage& shared_zero_page() { return *m_shared_zero_page; }
 
+    PageDirectory& kernel_page_directory() { return *m_kernel_page_directory; }
+
 private:
     MemoryManager();
     ~MemoryManager();
@@ -160,12 +176,10 @@ private:
     void unregister_region(Region&);
 
     void detect_cpu_features();
-    void setup_low_identity_mapping();
-    void setup_low_pseudo_identity_mapping();
     void protect_kernel_image();
     void parse_memory_map();
-    void flush_entire_tlb();
-    void flush_tlb(VirtualAddress);
+    static void flush_tlb_local(VirtualAddress, size_t page_count = 1);
+    static void flush_tlb(VirtualAddress, size_t page_count = 1);
 
     static Region* user_region_from_vaddr(Process&, VirtualAddress);
     static Region* kernel_region_from_vaddr(VirtualAddress);
@@ -178,8 +192,6 @@ private:
 
     PageDirectoryEntry* quickmap_pd(PageDirectory&, size_t pdpt_index);
     PageTableEntry* quickmap_pt(PhysicalAddress);
-
-    PageDirectory& kernel_page_directory() { return *m_kernel_page_directory; }
 
     const PageTableEntry* pte(const PageDirectory&, VirtualAddress);
     PageTableEntry& ensure_pte(PageDirectory&, VirtualAddress);
@@ -201,8 +213,6 @@ private:
     InlineLinkedList<Region> m_kernel_regions;
 
     InlineLinkedList<VMObject> m_vmobjects;
-
-    bool m_quickmap_in_use { false };
 
     RefPtr<PhysicalPage> m_low_pseudo_identity_mapping_pages[4];
 };

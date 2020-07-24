@@ -26,44 +26,57 @@
 
 #pragma once
 
+#include <AK/Weakable.h>
 #include <LibGfx/FloatRect.h>
+#include <LibGfx/Forward.h>
+#include <LibWeb/Forward.h>
 
 namespace Web {
 
-class LayoutNode;
-class RenderingContext;
-
-class LineBoxFragment {
+class LineBoxFragment : public Weakable<LineBoxFragment> {
     friend class LineBox;
+
 public:
-    LineBoxFragment(const LayoutNode& layout_node, int start, int length, const Gfx::FloatRect& rect)
+    LineBoxFragment(const LayoutNode& layout_node, int start, int length, const Gfx::FloatPoint& offset, const Gfx::FloatSize& size)
         : m_layout_node(layout_node)
         , m_start(start)
         , m_length(length)
-        , m_rect(rect)
+        , m_offset(offset)
+        , m_size(size)
     {
     }
 
     const LayoutNode& layout_node() const { return m_layout_node; }
     int start() const { return m_start; }
     int length() const { return m_length; }
-    const Gfx::FloatRect& rect() const { return m_rect; }
-    Gfx::FloatRect& rect() { return m_rect; }
+    const Gfx::FloatRect absolute_rect() const;
 
-    float width() const { return m_rect.width(); }
+    const Gfx::FloatPoint& offset() const { return m_offset; }
+    void set_offset(const Gfx::FloatPoint& offset) { m_offset = offset; }
 
-    void render(RenderingContext&);
+    const Gfx::FloatSize& size() const { return m_size; }
+    void set_width(float width) { m_size.set_width(width); }
+    float width() const { return m_size.width(); }
+    float height() const { return m_size.height(); }
 
+    float absolute_x() const { return absolute_rect().x(); }
+
+    void paint(PaintContext&);
+
+    bool ends_in_whitespace() const;
     bool is_justifiable_whitespace() const;
     StringView text() const;
 
     int text_index_at(float x) const;
 
+    Gfx::FloatRect selection_rect(const Gfx::Font&) const;
+
 private:
     const LayoutNode& m_layout_node;
     int m_start { 0 };
     int m_length { 0 };
-    Gfx::FloatRect m_rect;
+    Gfx::FloatPoint m_offset;
+    Gfx::FloatSize m_size;
 };
 
 }

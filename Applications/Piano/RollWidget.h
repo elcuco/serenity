@@ -30,7 +30,7 @@
 #include "Music.h"
 #include <LibGUI/ScrollableWidget.h>
 
-class AudioEngine;
+class TrackManager;
 
 class RollWidget final : public GUI::ScrollableWidget {
     C_OBJECT(RollWidget)
@@ -38,13 +38,13 @@ public:
     virtual ~RollWidget() override;
 
 private:
-    explicit RollWidget(AudioEngine&);
+    explicit RollWidget(TrackManager&);
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void mousedown_event(GUI::MouseEvent& event) override;
     virtual void mousewheel_event(GUI::MouseEvent&) override;
 
-    AudioEngine& m_audio_engine;
+    TrackManager& m_track_manager;
 
     int m_roll_width;
     int m_num_notes;

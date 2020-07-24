@@ -26,38 +26,83 @@
 
 #pragma once
 
+#define JS_DECLARE_NATIVE_FUNCTION(name) \
+    static JS::Value name(JS::Interpreter&, JS::GlobalObject&)
+
+#define JS_DECLARE_NATIVE_GETTER(name) \
+    static JS::Value name(JS::Interpreter&, JS::GlobalObject&)
+
+#define JS_DECLARE_NATIVE_SETTER(name) \
+    static void name(JS::Interpreter&, JS::GlobalObject&, JS::Value)
+
+#define JS_DEFINE_NATIVE_FUNCTION(name) \
+    JS::Value name([[maybe_unused]] JS::Interpreter& interpreter, [[maybe_unused]] JS::GlobalObject& global_object)
+
+#define JS_DEFINE_NATIVE_GETTER(name) \
+    JS::Value name([[maybe_unused]] JS::Interpreter& interpreter, [[maybe_unused]] JS::GlobalObject& global_object)
+
+#define JS_DEFINE_NATIVE_SETTER(name) \
+    void name([[maybe_unused]] JS::Interpreter& interpreter, [[maybe_unused]] JS::GlobalObject& global_object, JS::Value value)
+
 #define JS_ENUMERATE_NATIVE_OBJECTS                                              \
     __JS_ENUMERATE(Array, array, ArrayPrototype, ArrayConstructor)               \
+    __JS_ENUMERATE(BigIntObject, bigint, BigIntPrototype, BigIntConstructor)     \
     __JS_ENUMERATE(BooleanObject, boolean, BooleanPrototype, BooleanConstructor) \
     __JS_ENUMERATE(Date, date, DatePrototype, DateConstructor)                   \
     __JS_ENUMERATE(Error, error, ErrorPrototype, ErrorConstructor)               \
     __JS_ENUMERATE(Function, function, FunctionPrototype, FunctionConstructor)   \
     __JS_ENUMERATE(NumberObject, number, NumberPrototype, NumberConstructor)     \
     __JS_ENUMERATE(Object, object, ObjectPrototype, ObjectConstructor)           \
-    __JS_ENUMERATE(StringObject, string, StringPrototype, StringConstructor)
+    __JS_ENUMERATE(ProxyObject, proxy, ProxyPrototype, ProxyConstructor)         \
+    __JS_ENUMERATE(RegExpObject, regexp, RegExpPrototype, RegExpConstructor)     \
+    __JS_ENUMERATE(StringObject, string, StringPrototype, StringConstructor)     \
+    __JS_ENUMERATE(SymbolObject, symbol, SymbolPrototype, SymbolConstructor)
 
 #define JS_ENUMERATE_ERROR_SUBCLASSES                                                                   \
     __JS_ENUMERATE(EvalError, eval_error, EvalErrorPrototype, EvalErrorConstructor)                     \
     __JS_ENUMERATE(InternalError, internal_error, InternalErrorPrototype, InternalErrorConstructor)     \
+    __JS_ENUMERATE(InvalidCharacterError, invalid_character_error, InvalidCharacterErrorPrototype, InvalidCharacterErrorConstructor)     \
     __JS_ENUMERATE(RangeError, range_error, RangeErrorPrototype, RangeErrorConstructor)                 \
     __JS_ENUMERATE(ReferenceError, reference_error, ReferenceErrorPrototype, ReferenceErrorConstructor) \
     __JS_ENUMERATE(SyntaxError, syntax_error, SyntaxErrorPrototype, SyntaxErrorConstructor)             \
     __JS_ENUMERATE(TypeError, type_error, TypeErrorPrototype, TypeErrorConstructor)                     \
     __JS_ENUMERATE(URIError, uri_error, URIErrorPrototype, URIErrorConstructor)
 
+#define JS_ENUMERATE_ITERATOR_PROTOTYPES            \
+    __JS_ENUMERATE(Iterator, iterator)              \
+    __JS_ENUMERATE(ArrayIterator, array_iterator)   \
+    __JS_ENUMERATE(StringIterator, string_iterator)
+
 #define JS_ENUMERATE_BUILTIN_TYPES \
     JS_ENUMERATE_NATIVE_OBJECTS    \
     JS_ENUMERATE_ERROR_SUBCLASSES
 
+#define JS_ENUMERATE_WELL_KNOWN_SYMBOLS                        \
+    __JS_ENUMERATE(iterator, iterator)                         \
+    __JS_ENUMERATE(asyncIterator, async_iterator)              \
+    __JS_ENUMERATE(match, match)                               \
+    __JS_ENUMERATE(matchAll, match_all)                        \
+    __JS_ENUMERATE(replace, replace)                           \
+    __JS_ENUMERATE(search, search)                             \
+    __JS_ENUMERATE(split, split)                               \
+    __JS_ENUMERATE(hasInstance, has_instance)                  \
+    __JS_ENUMERATE(isConcatSpreadable, is_concat_spreadable)   \
+    __JS_ENUMERATE(unscopables, unscopables)                   \
+    __JS_ENUMERATE(species, species)                           \
+    __JS_ENUMERATE(toPrimitive, to_primitive)                  \
+    __JS_ENUMERATE(toStringTag, to_string_tag)
+
 namespace JS {
 
 class ASTNode;
+class BigInt;
 class BoundFunction;
 class Cell;
 class DeferGC;
 class Error;
 class Exception;
 class Expression;
+class Accessor;
 class GlobalObject;
 class HandleImpl;
 class Heap;
@@ -65,11 +110,14 @@ class HeapBlock;
 class Interpreter;
 class LexicalEnvironment;
 class MarkedValueList;
+class NativeProperty;
 class PrimitiveString;
 class Reference;
 class ScopeNode;
 class Shape;
 class Statement;
+class Symbol;
+class Token;
 class Uint8ClampedArray;
 class Value;
 enum class DeclarationKind;

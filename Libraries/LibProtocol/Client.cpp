@@ -47,9 +47,13 @@ bool Client::is_supported_protocol(const String& protocol)
     return send_sync<Messages::ProtocolServer::IsSupportedProtocol>(protocol)->supported();
 }
 
-RefPtr<Download> Client::start_download(const String& url)
+RefPtr<Download> Client::start_download(const String& url, const HashMap<String, String>& request_headers)
 {
-    i32 download_id = send_sync<Messages::ProtocolServer::StartDownload>(url)->download_id();
+    IPC::Dictionary header_dictionary;
+    for (auto& it : request_headers)
+        header_dictionary.add(it.key, it.value);
+
+    i32 download_id = send_sync<Messages::ProtocolServer::StartDownload>(url, header_dictionary)->download_id();
     if (download_id < 0)
         return nullptr;
     auto download = Download::create_from_id({}, *this, download_id);
@@ -68,7 +72,7 @@ void Client::handle(const Messages::ProtocolClient::DownloadFinished& message)
 {
     RefPtr<Download> download;
     if ((download = m_downloads.get(message.download_id()).value_or(nullptr))) {
-        download->did_finish({}, message.success(), message.total_size(), message.shbuf_id(), message.response_headers());
+        download->did_finish({}, message.success(), message.status_code(), message.total_size(), message.shbuf_id(), message.response_headers());
     }
     send_sync<Messages::ProtocolServer::DisownSharedBuffer>(message.shbuf_id());
     m_downloads.remove(message.download_id());

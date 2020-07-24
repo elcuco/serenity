@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <AK/TemporaryChange.h>
 #include <Kernel/KSyms.h>
 #include <Kernel/Lock.h>
 #include <Kernel/Thread.h>
@@ -44,35 +45,48 @@ static bool modes_conflict(Lock::Mode mode1, Lock::Mode mode2)
 void Lock::lock(Mode mode)
 {
     ASSERT(mode != Mode::Unlocked);
-    ASSERT(!Scheduler::is_active());
     if (!are_interrupts_enabled()) {
         klog() << "Interrupts disabled when trying to take Lock{" << m_name << "}";
         dump_backtrace();
-        hang();
+        Processor::halt();
     }
+    auto current_thread = Thread::current();
     for (;;) {
         bool expected = false;
         if (m_lock.compare_exchange_strong(expected, true, AK::memory_order_acq_rel)) {
-            // FIXME: Do not add new readers if writers are queued.
-            bool modes_dont_conflict = !modes_conflict(m_mode, mode);
-            bool already_hold_exclusive_lock = m_mode == Mode::Exclusive && m_holder == Thread::current;
-            if (modes_dont_conflict || already_hold_exclusive_lock) {
-                // We got the lock!
-                if (!already_hold_exclusive_lock)
-                    m_mode = mode;
-                m_holder = Thread::current;
-                m_times_locked++;
-                m_lock.store(false, AK::memory_order_release);
-                return;
-            }
-            timeval* timeout = nullptr;
-            Thread::current->wait_on(m_queue, timeout, &m_lock, m_holder, m_name);
+            do {
+                // FIXME: Do not add new readers if writers are queued.
+                bool modes_dont_conflict = !modes_conflict(m_mode, mode);
+                bool already_hold_exclusive_lock = m_mode == Mode::Exclusive && m_holder == current_thread;
+                if (modes_dont_conflict || already_hold_exclusive_lock) {
+                    // We got the lock!
+                    if (!already_hold_exclusive_lock)
+                        m_mode = mode;
+                    m_holder = current_thread;
+                    m_times_locked++;
+                    m_lock.store(false, AK::memory_order_release);
+                    return;
+                }
+             } while (current_thread->wait_on(m_queue, m_name, nullptr, &m_lock, m_holder) == Thread::BlockResult::NotBlocked);
+        } else if (Processor::current().in_critical()) {
+            // If we're in a critical section and trying to lock, no context
+            // switch will happen, so yield.
+            // The assumption is that if we call this from a critical section
+            // that we DO want to temporarily leave it
+            u32 prev_flags;
+            u32 prev_crit = Processor::current().clear_critical(prev_flags, !Processor::current().in_irq());
+
+            Scheduler::yield();
+
+            // Note, we may now be on a different CPU!
+            Processor::current().restore_critical(prev_crit, prev_flags);
         }
     }
 }
 
 void Lock::unlock()
 {
+    auto current_thread = Thread::current();
     for (;;) {
         bool expected = false;
         if (m_lock.compare_exchange_strong(expected, true, AK::memory_order_acq_rel)) {
@@ -81,8 +95,8 @@ void Lock::unlock()
 
             ASSERT(m_mode != Mode::Unlocked);
             if (m_mode == Mode::Exclusive)
-                ASSERT(m_holder == Thread::current);
-            if (m_holder == Thread::current && (m_mode == Mode::Shared || m_times_locked == 0))
+                ASSERT(m_holder == current_thread);
+            if (m_holder == current_thread && (m_mode == Mode::Shared || m_times_locked == 0))
                 m_holder = nullptr;
 
             if (m_times_locked > 0) {
@@ -94,15 +108,23 @@ void Lock::unlock()
             return;
         }
         // I don't know *who* is using "m_lock", so just yield.
+        // The assumption is that if we call this from a critical section
+        // that we DO want to temporarily leave it
+        u32 prev_flags;
+        u32 prev_crit = Processor::current().clear_critical(prev_flags, false);
+
         Scheduler::yield();
+
+        // Note, we may now be on a different CPU!
+        Processor::current().restore_critical(prev_crit, prev_flags);
     }
 }
 
 bool Lock::force_unlock_if_locked()
 {
     ASSERT(m_mode != Mode::Shared);
-    InterruptDisabler disabler;
-    if (m_holder != Thread::current)
+    ScopedCritical critical;
+    if (m_holder != Thread::current())
         return false;
     ASSERT(m_times_locked == 1);
     m_holder = nullptr;
@@ -115,7 +137,7 @@ bool Lock::force_unlock_if_locked()
 void Lock::clear_waiters()
 {
     ASSERT(m_mode != Mode::Shared);
-    InterruptDisabler disabler;
+    ScopedCritical critical;
     m_queue.clear();
 }
 

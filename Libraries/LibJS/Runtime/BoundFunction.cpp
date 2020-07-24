@@ -30,13 +30,19 @@
 
 namespace JS {
 
-BoundFunction::BoundFunction(Function& target_function, Value bound_this, Vector<Value> arguments, i32 length, Object* constructor_prototype)
-    : Function::Function(*interpreter().global_object().function_prototype(), bound_this, move(arguments))
+BoundFunction::BoundFunction(GlobalObject& global_object, Function& target_function, Value bound_this, Vector<Value> arguments, i32 length, Object* constructor_prototype)
+    : Function::Function(*global_object.function_prototype(), bound_this, move(arguments))
     , m_target_function(&target_function)
     , m_constructor_prototype(constructor_prototype)
     , m_name(String::format("bound %s", target_function.name().characters()))
+    , m_length(length)
 {
-    put("length", Value(length), Attribute::Configurable);
+}
+
+void BoundFunction::initialize(GlobalObject& global_object)
+{
+    Function::initialize(global_object);
+    define_property("length", Value(m_length), Attribute::Configurable);
 }
 
 BoundFunction::~BoundFunction()
@@ -48,12 +54,14 @@ Value BoundFunction::call(Interpreter& interpreter)
     return m_target_function->call(interpreter);
 }
 
-Value BoundFunction::construct(Interpreter& interpreter)
+Value BoundFunction::construct(Interpreter& interpreter, Function& new_target)
 {
-    if (auto this_value = interpreter.this_value(); m_constructor_prototype && this_value.is_object()) {
+    if (auto this_value = interpreter.this_value(global_object()); m_constructor_prototype && this_value.is_object()) {
         this_value.as_object().set_prototype(m_constructor_prototype);
+        if (interpreter.exception())
+            return {};
     }
-    return m_target_function->construct(interpreter);
+    return m_target_function->construct(interpreter, new_target);
 }
 
 LexicalEnvironment* BoundFunction::create_environment()

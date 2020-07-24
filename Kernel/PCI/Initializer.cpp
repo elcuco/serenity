@@ -31,7 +31,7 @@
 #include <Kernel/PCI/IOAccess.h>
 #include <Kernel/PCI/Initializer.h>
 #include <Kernel/PCI/MMIOAccess.h>
-#include <LibBareMetal/IO.h>
+#include <Kernel/IO.h>
 
 namespace Kernel {
 namespace PCI {
@@ -47,7 +47,7 @@ static Access::Type detect_optimal_access_type(bool mmio_allowed)
         return Access::Type::IO;
 
     klog() << "No PCI bus access method detected!";
-    hang();
+    Processor::halt();
 }
 
 void initialize()

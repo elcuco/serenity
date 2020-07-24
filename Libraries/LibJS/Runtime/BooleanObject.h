@@ -30,6 +30,8 @@
 
 namespace JS {
 class BooleanObject : public Object {
+    JS_OBJECT(BooleanObject, Object);
+
 public:
     static BooleanObject* create(GlobalObject&, bool);
 
@@ -42,8 +44,7 @@ public:
     }
 
 private:
-    virtual const char* class_name() const override { return "BooleanObject"; }
-    virtual bool is_boolean() const override { return true; }
+    virtual bool is_boolean_object() const override { return true; }
     bool m_value { false };
 };
 }

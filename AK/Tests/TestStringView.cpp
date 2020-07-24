@@ -68,6 +68,8 @@ TEST_CASE(starts_with)
     EXPECT(test_string_view.starts_with("AB"));
     EXPECT(test_string_view.starts_with("ABCDEF"));
     EXPECT(!test_string_view.starts_with("DEF"));
+    EXPECT(test_string_view.starts_with("abc",  CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string_view.starts_with("abc",  CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(ends_with)
@@ -80,6 +82,8 @@ TEST_CASE(ends_with)
     EXPECT(test_string_view.ends_with("ABCDEF"));
     EXPECT(!test_string_view.ends_with("ABCDE"));
     EXPECT(!test_string_view.ends_with("ABCDEFG"));
+    EXPECT(test_string_view.ends_with("def",  CaseSensitivity::CaseInsensitive));
+    EXPECT(!test_string_view.ends_with("def",  CaseSensitivity::CaseSensitive));
 }
 
 TEST_CASE(lines)

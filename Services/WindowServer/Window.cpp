@@ -25,13 +25,15 @@
  */
 
 #include "Window.h"
+#include "AppletManager.h"
 #include "ClientConnection.h"
+#include "Compositor.h"
 #include "Event.h"
 #include "EventLoop.h"
 #include "Screen.h"
-#include "WindowClientEndpoint.h"
 #include "WindowManager.h"
 #include <AK/Badge.h>
+#include <WindowServer/WindowClientEndpoint.h>
 
 namespace WindowServer {
 
@@ -89,7 +91,7 @@ Window::Window(Core::Object& parent, WindowType type)
     WindowManager::the().add_window(*this);
 }
 
-Window::Window(ClientConnection& client, WindowType window_type, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen)
+Window::Window(ClientConnection& client, WindowType window_type, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window)
     : Core::Object(&client)
     , m_client(&client)
     , m_type(window_type)
@@ -98,6 +100,7 @@ Window::Window(ClientConnection& client, WindowType window_type, int window_id, 
     , m_frameless(frameless)
     , m_resizable(resizable)
     , m_fullscreen(fullscreen)
+    , m_accessory(accessory)
     , m_window_id(window_id)
     , m_client_id(client.client_id())
     , m_icon(default_window_icon())
@@ -109,6 +112,8 @@ Window::Window(ClientConnection& client, WindowType window_type, int window_id, 
         m_listens_to_wm_events = true;
     }
 
+    if (parent_window)
+        set_parent_window(*parent_window);
     WindowManager::the().add_window(*this);
 }
 
@@ -121,6 +126,12 @@ Window::~Window()
     WindowManager::the().remove_window(*this);
 }
 
+void Window::destroy()
+{
+    m_destroyed = true;
+    invalidate();
+}
+
 void Window::set_title(const String& title)
 {
     if (m_title == title)
@@ -129,10 +140,10 @@ void Window::set_title(const String& title)
     WindowManager::the().notify_title_changed(*this);
 }
 
-void Window::set_rect(const Gfx::Rect& rect)
+void Window::set_rect(const Gfx::IntRect& rect)
 {
     ASSERT(!rect.is_empty());
-    Gfx::Rect old_rect;
+    Gfx::IntRect old_rect;
     if (m_rect == rect)
         return;
     old_rect = m_rect;
@@ -143,7 +154,7 @@ void Window::set_rect(const Gfx::Rect& rect)
     m_frame.notify_window_rect_changed(old_rect, rect);
 }
 
-void Window::set_rect_without_repaint(const Gfx::Rect& rect)
+void Window::set_rect_without_repaint(const Gfx::IntRect& rect)
 {
     ASSERT(!rect.is_empty());
     if (m_rect == rect)
@@ -209,11 +220,10 @@ void Window::set_minimized(bool minimized)
         return;
     if (minimized && !m_minimizable)
         return;
-    if (is_blocked_by_modal_window())
-        return;
     m_minimized = minimized;
     update_menu_item_text(PopupMenuItem::Minimize);
-    start_minimize_animation();
+    if (!is_blocked_by_modal_window())
+        start_minimize_animation();
     if (!minimized)
         request_update({ {}, size() });
     invalidate();
@@ -250,8 +260,6 @@ void Window::set_maximized(bool maximized)
     if (m_maximized == maximized)
         return;
     if (maximized && !is_resizable())
-        return;
-    if (is_blocked_by_modal_window())
         return;
     set_tiled(WindowTileType::None);
     m_maximized = maximized;
@@ -300,22 +308,30 @@ void Window::event(Core::Event& event)
     case Event::KeyDown:
         m_client->post_message(
             Messages::WindowClient::KeyDown(m_window_id,
-                (u8) static_cast<const KeyEvent&>(event).character(),
+                (u32) static_cast<const KeyEvent&>(event).code_point(),
                 (u32) static_cast<const KeyEvent&>(event).key(),
-                static_cast<const KeyEvent&>(event).modifiers()));
+                static_cast<const KeyEvent&>(event).modifiers(),
+                (u32) static_cast<const KeyEvent&>(event).scancode()));
         break;
     case Event::KeyUp:
         m_client->post_message(
             Messages::WindowClient::KeyUp(m_window_id,
-                (u8) static_cast<const KeyEvent&>(event).character(),
+                (u32) static_cast<const KeyEvent&>(event).code_point(),
                 (u32) static_cast<const KeyEvent&>(event).key(),
-                static_cast<const KeyEvent&>(event).modifiers()));
+                static_cast<const KeyEvent&>(event).modifiers(),
+                (u32) static_cast<const KeyEvent&>(event).scancode()));
         break;
     case Event::WindowActivated:
         m_client->post_message(Messages::WindowClient::WindowActivated(m_window_id));
         break;
     case Event::WindowDeactivated:
         m_client->post_message(Messages::WindowClient::WindowDeactivated(m_window_id));
+        break;
+    case Event::WindowInputEntered:
+        m_client->post_message(Messages::WindowClient::WindowInputEntered(m_window_id));
+        break;
+    case Event::WindowInputLeft:
+        m_client->post_message(Messages::WindowClient::WindowInputLeft(m_window_id));
         break;
     case Event::WindowCloseRequest:
         m_client->post_message(Messages::WindowClient::WindowCloseRequest(m_window_id));
@@ -347,12 +363,26 @@ void Window::set_visible(bool b)
 
 void Window::invalidate()
 {
-    WindowManager::the().invalidate(*this);
+    Compositor::the().invalidate(frame().rect());
 }
 
-void Window::invalidate(const Gfx::Rect& rect)
+void Window::invalidate(const Gfx::IntRect& rect)
 {
-    WindowManager::the().invalidate(*this, rect);
+    if (type() == WindowType::MenuApplet) {
+        AppletManager::the().invalidate_applet(*this, rect);
+        return;
+    }
+
+    if (rect.is_empty()) {
+        invalidate();
+        return;
+    }
+    auto outer_rect = frame().rect();
+    auto inner_rect = rect;
+    inner_rect.move_by(position());
+    // FIXME: This seems slightly wrong; the inner rect shouldn't intersect the border part of the outer rect.
+    inner_rect.intersect(outer_rect);
+    Compositor::the().invalidate(inner_rect);
 }
 
 bool Window::is_active() const
@@ -360,16 +390,20 @@ bool Window::is_active() const
     return WindowManager::the().active_window() == this;
 }
 
-bool Window::is_blocked_by_modal_window() const
+Window* Window::is_blocked_by_modal_window()
 {
-    bool is_any_modal = false;
-    const Window* next = this;
-    while (!is_any_modal && next) {
-        is_any_modal = next->is_modal();
-        next = next->parent_window();
+    // A window is blocked if any immediate child, or any child further
+    // down the chain is modal
+    for (auto& window: m_child_windows) {
+        if (window && !window->is_destroyed()) {
+            if (window->is_modal())
+                return window;
+            
+            if (auto* blocking_modal_window = window->is_blocked_by_modal_window())
+                return blocking_modal_window;
+        }
     }
-
-    return !is_any_modal && client() && client()->is_showing_modal_window();
+    return nullptr;
 }
 
 void Window::set_default_icon()
@@ -377,7 +411,7 @@ void Window::set_default_icon()
     m_icon = default_window_icon();
 }
 
-void Window::request_update(const Gfx::Rect& rect, bool ignore_occlusion)
+void Window::request_update(const Gfx::IntRect& rect, bool ignore_occlusion)
 {
     if (m_pending_paint_rects.is_empty()) {
         deferred_invoke([this, ignore_occlusion](auto&) {
@@ -387,7 +421,7 @@ void Window::request_update(const Gfx::Rect& rect, bool ignore_occlusion)
     m_pending_paint_rects.add(rect);
 }
 
-void Window::popup_window_menu(const Gfx::Point& position)
+void Window::ensure_window_menu()
 {
     if (!m_window_menu) {
         m_window_menu = Menu::construct(nullptr, -1, "(Window Menu)");
@@ -404,7 +438,9 @@ void Window::popup_window_menu(const Gfx::Point& position)
         m_window_menu->add_item(make<MenuItem>(*m_window_menu, MenuItem::Type::Separator));
 
         auto close_item = make<MenuItem>(*m_window_menu, 3, "Close");
-        close_item->set_icon(&close_icon());
+        m_window_menu_close_item = close_item.ptr();
+        m_window_menu_close_item->set_icon(&close_icon());
+        m_window_menu_close_item->set_default(true);
         m_window_menu->add_item(move(close_item));
 
         m_window_menu->item((int)PopupMenuItem::Minimize).set_enabled(m_minimizable);
@@ -413,14 +449,12 @@ void Window::popup_window_menu(const Gfx::Point& position)
         m_window_menu->on_item_activation = [&](auto& item) {
             switch (item.identifier()) {
             case 1:
-                set_minimized(!m_minimized);
+                WindowManager::the().minimize_windows(*this, !m_minimized);
                 if (!m_minimized)
                     WindowManager::the().move_to_front_and_make_active(*this);
                 break;
             case 2:
-                set_maximized(!m_maximized);
-                if (m_minimized)
-                    set_minimized(false);
+                WindowManager::the().maximize_windows(*this, !m_maximized);
                 WindowManager::the().move_to_front_and_make_active(*this);
                 break;
             case 3:
@@ -429,10 +463,33 @@ void Window::popup_window_menu(const Gfx::Point& position)
             }
         };
     }
+}
+
+void Window::popup_window_menu(const Gfx::IntPoint& position, WindowMenuDefaultAction default_action)
+{
+    ensure_window_menu();
+    if (default_action == WindowMenuDefaultAction::BasedOnWindowState) {
+        // When clicked on the task bar, determine the default action
+        if (!is_active() && !is_minimized())
+            default_action = WindowMenuDefaultAction::None;
+        else if (is_minimized())
+            default_action = WindowMenuDefaultAction::Unminimize;
+        else
+            default_action = WindowMenuDefaultAction::Minimize;
+    }
+    m_window_menu_minimize_item->set_default(default_action == WindowMenuDefaultAction::Minimize || default_action == WindowMenuDefaultAction::Unminimize);
     m_window_menu_minimize_item->set_icon(m_minimized ? nullptr : &minimize_icon());
+    m_window_menu_maximize_item->set_default(default_action == WindowMenuDefaultAction::Maximize || default_action == WindowMenuDefaultAction::Restore);
     m_window_menu_maximize_item->set_icon(m_maximized ? &restore_icon() : &maximize_icon());
+    m_window_menu_close_item->set_default(default_action == WindowMenuDefaultAction::Close);
 
     m_window_menu->popup(position);
+}
+
+void Window::window_menu_activate_default()
+{
+    ensure_window_menu();
+    m_window_menu->activate_default();
 }
 
 void Window::request_close()
@@ -446,7 +503,7 @@ void Window::set_fullscreen(bool fullscreen)
     if (m_fullscreen == fullscreen)
         return;
     m_fullscreen = fullscreen;
-    Gfx::Rect new_window_rect = m_rect;
+    Gfx::IntRect new_window_rect = m_rect;
     if (m_fullscreen) {
         m_saved_nonfullscreen_rect = m_rect;
         new_window_rect = Screen::the().rect();
@@ -457,19 +514,19 @@ void Window::set_fullscreen(bool fullscreen)
     set_rect(new_window_rect);
 }
 
-Gfx::Rect Window::tiled_rect(WindowTileType tiled) const
+Gfx::IntRect Window::tiled_rect(WindowTileType tiled) const
 {
     int frame_width = (m_frame.rect().width() - m_rect.width()) / 2;
     switch (tiled) {
     case WindowTileType::None:
         return m_untiled_rect;
     case WindowTileType::Left:
-        return Gfx::Rect(0,
+        return Gfx::IntRect(0,
             WindowManager::the().maximized_window_rect(*this).y(),
             Screen::the().width() / 2 - frame_width,
             WindowManager::the().maximized_window_rect(*this).height());
     case WindowTileType::Right:
-        return Gfx::Rect(Screen::the().width() / 2 + frame_width,
+        return Gfx::IntRect(Screen::the().width() / 2 + frame_width,
             WindowManager::the().maximized_window_rect(*this).y(),
             Screen::the().width() / 2 - frame_width,
             WindowManager::the().maximized_window_rect(*this).height());
@@ -502,11 +559,20 @@ void Window::recalculate_rect()
         return;
 
     auto old_rect = m_rect;
-    if (m_tiled != WindowTileType::None)
+    bool send_event = true;
+    if (m_tiled != WindowTileType::None) {
         set_rect(tiled_rect(m_tiled));
-    else if (is_maximized())
+    } else if (is_maximized()) {
         set_rect(WindowManager::the().maximized_window_rect(*this));
-    Core::EventLoop::current().post_event(*this, make<ResizeEvent>(old_rect, m_rect));
+    } else if (type() == WindowType::Desktop) {
+        set_rect(WindowManager::the().desktop_rect());
+    } else {
+        send_event = false;
+    }
+
+    if (send_event) {
+        Core::EventLoop::current().post_event(*this, make<ResizeEvent>(old_rect, m_rect));
+    }
 }
 
 void Window::add_child_window(Window& child_window)
@@ -514,11 +580,77 @@ void Window::add_child_window(Window& child_window)
     m_child_windows.append(child_window.make_weak_ptr());
 }
 
+void Window::add_accessory_window(Window& accessory_window)
+{
+    m_accessory_windows.append(accessory_window.make_weak_ptr());
+}
+
 void Window::set_parent_window(Window& parent_window)
 {
     ASSERT(!m_parent_window);
     m_parent_window = parent_window.make_weak_ptr();
-    parent_window.add_child_window(*this);
+    if (m_accessory)
+        parent_window.add_accessory_window(*this);
+    else
+        parent_window.add_child_window(*this);
+}
+
+bool Window::is_accessory() const
+{
+    if (!m_accessory)
+        return false;
+    if (parent_window() != nullptr)
+        return true;
+    
+    // If accessory window was unparented, convert to a regular window
+    const_cast<Window*>(this)->set_accessory(false);
+    return false;
+}
+
+bool Window::is_accessory_of(Window& window) const
+{
+    if (!is_accessory())
+        return false;
+    return parent_window() == &window;
+}
+
+void Window::modal_unparented()
+{
+    m_modal = false;
+    WindowManager::the().notify_modal_unparented(*this);
+}
+
+bool Window::is_modal() const
+{
+    if (!m_modal)
+        return false;
+    if (!m_parent_window) {
+        const_cast<Window*>(this)->modal_unparented();
+        return false;
+    }
+    return true;
+}
+
+void Window::set_progress(int progress)
+{
+    if (m_progress == progress)
+        return;
+
+    m_progress = progress;
+    WindowManager::the().notify_progress_changed(*this);
+}
+
+bool Window::is_descendant_of(Window& window) const
+{
+    for (auto* parent = parent_window(); parent; parent = parent->parent_window()) {
+        if (parent == &window)
+            return true;
+        for (auto& accessory : parent->accessory_windows()) {
+            if (accessory == &window)
+                return true;
+        }
+    }
+    return false;
 }
 
 }

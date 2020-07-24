@@ -26,16 +26,30 @@
 
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Layout/LayoutTableCell.h>
+#include <LibWeb/Layout/LayoutTableRow.h>
 
 namespace Web {
 
-LayoutTableCell::LayoutTableCell(const Element& element, NonnullRefPtr<StyleProperties> style)
-    : LayoutBlock(&element, move(style))
+LayoutTableCell::LayoutTableCell(Document& document, const Element& element, NonnullRefPtr<StyleProperties> style)
+    : LayoutBlock(document, &element, move(style))
 {
 }
 
 LayoutTableCell::~LayoutTableCell()
 {
+}
+
+size_t LayoutTableCell::colspan() const
+{
+    ASSERT(node());
+    return to<Element>(*node()).attribute(HTML::AttributeNames::colspan).to_uint().value_or(1);
+}
+
+float LayoutTableCell::width_of_logical_containing_block() const
+{
+    if (auto* row = first_ancestor_of_type<LayoutTableRow>())
+        return row->width();
+    return 0;
 }
 
 }

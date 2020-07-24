@@ -110,9 +110,10 @@ int Menu::content_width() const
     for (auto& item : m_items) {
         if (item.type() != MenuItem::Text)
             continue;
-        int text_width = font().width(item.text());
+        auto& use_font = item.is_default() ? Gfx::Font::default_bold_font() : font();
+        int text_width = use_font.width(item.text());
         if (!item.shortcut_text().is_empty()) {
-            int shortcut_width = font().width(item.shortcut_text());
+            int shortcut_width = use_font.width(item.shortcut_text());
             widest_shortcut = max(shortcut_width, widest_shortcut);
         }
         widest_text = max(widest_text, text_width);
@@ -140,7 +141,7 @@ Window& Menu::ensure_menu_window()
 
     int width = this->content_width();
 
-    Gfx::Point next_item_location(frame_thickness(), frame_thickness());
+    Gfx::IntPoint next_item_location(frame_thickness(), frame_thickness());
     for (auto& item : m_items) {
         int height = 0;
         if (item.type() == MenuItem::Text)
@@ -186,7 +187,7 @@ void Menu::draw()
     ASSERT(menu_window()->backing_store());
     Gfx::Painter painter(*menu_window()->backing_store());
 
-    Gfx::Rect rect { {}, menu_window()->size() };
+    Gfx::IntRect rect { {}, menu_window()->size() };
     Gfx::StylePainter::paint_window_frame(painter, rect, palette);
     painter.fill_rect(rect.shrunken(6, 6), palette.menu_base());
     int width = this->content_width();
@@ -201,7 +202,7 @@ void Menu::draw()
         has_items_with_icon = has_items_with_icon | !!item.icon();
     }
 
-    Gfx::Rect stripe_rect { frame_thickness(), frame_thickness(), s_stripe_width, menu_window()->height() - frame_thickness() * 2 };
+    Gfx::IntRect stripe_rect { frame_thickness(), frame_thickness(), s_stripe_width, menu_window()->height() - frame_thickness() * 2 };
     painter.fill_rect(stripe_rect, palette.menu_stripe());
     painter.draw_line(stripe_rect.top_right(), stripe_rect.bottom_right(), palette.menu_stripe().darkened());
 
@@ -210,10 +211,10 @@ void Menu::draw()
     if (is_scrollable()) {
         bool can_go_up = m_scroll_offset > 0;
         bool can_go_down = m_scroll_offset < m_max_scroll_offset;
-        Gfx::Rect up_indicator_rect { frame_thickness(), frame_thickness(), content_width(), item_height() };
-        painter.draw_text(up_indicator_rect, "\xc3\xb6", Gfx::TextAlignment::Center, can_go_up ? palette.menu_base_text() : palette.color(ColorRole::DisabledText));
-        Gfx::Rect down_indicator_rect { frame_thickness(), menu_window()->height() - item_height() - frame_thickness(), content_width(), item_height() };
-        painter.draw_text(down_indicator_rect, "\xc3\xb7", Gfx::TextAlignment::Center, can_go_down ? palette.menu_base_text() : palette.color(ColorRole::DisabledText));
+        Gfx::IntRect up_indicator_rect { frame_thickness(), frame_thickness(), content_width(), item_height() };
+        painter.draw_text(up_indicator_rect, "\xE2\xAC\x86", Gfx::TextAlignment::Center, can_go_up ? palette.menu_base_text() : palette.color(ColorRole::DisabledText));
+        Gfx::IntRect down_indicator_rect { frame_thickness(), menu_window()->height() - item_height() - frame_thickness(), content_width(), item_height() };
+        painter.draw_text(down_indicator_rect, "\xE2\xAC\x87", Gfx::TextAlignment::Center, can_go_down ? palette.menu_base_text() : palette.color(ColorRole::DisabledText));
     }
 
     for (int i = 0; i < visible_item_count; ++i) {
@@ -227,16 +228,16 @@ void Menu::draw()
             } else if (!item.is_enabled()) {
                 text_color = Color::MidGray;
             }
-            Gfx::Rect text_rect = item.rect().translated(stripe_rect.width() + 6, 0);
+            Gfx::IntRect text_rect = item.rect().translated(stripe_rect.width() + 6, 0);
             if (item.is_checkable()) {
                 if (item.is_exclusive()) {
-                    Gfx::Rect radio_rect { item.rect().x() + 5, 0, 12, 12 };
+                    Gfx::IntRect radio_rect { item.rect().x() + 5, 0, 12, 12 };
                     radio_rect.center_vertically_within(text_rect);
                     Gfx::StylePainter::paint_radio_button(painter, radio_rect, palette, item.is_checked(), false);
                 } else {
-                    Gfx::Rect checkmark_rect { item.rect().x() + 7, 0, s_checked_bitmap_width, s_checked_bitmap_height };
+                    Gfx::IntRect checkmark_rect { item.rect().x() + 7, 0, s_checked_bitmap_width, s_checked_bitmap_height };
                     checkmark_rect.center_vertically_within(text_rect);
-                    Gfx::Rect checkbox_rect = checkmark_rect.inflated(4, 4);
+                    Gfx::IntRect checkbox_rect = checkmark_rect.inflated(4, 4);
                     painter.fill_rect(checkbox_rect, palette.base());
                     Gfx::StylePainter::paint_frame(painter, checkbox_rect, palette, Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
                     if (item.is_checked()) {
@@ -244,17 +245,21 @@ void Menu::draw()
                     }
                 }
             } else if (item.icon()) {
-                Gfx::Rect icon_rect { item.rect().x() + 3, 0, s_item_icon_width, s_item_icon_width };
+                Gfx::IntRect icon_rect { item.rect().x() + 3, 0, s_item_icon_width, s_item_icon_width };
                 icon_rect.center_vertically_within(text_rect);
                 painter.blit(icon_rect.location(), *item.icon(), item.icon()->rect());
             }
+            auto& previous_font = painter.font();
+            if (item.is_default())
+                painter.set_font(Gfx::Font::default_bold_font());
             painter.draw_text(text_rect, item.text(), Gfx::TextAlignment::CenterLeft, text_color);
             if (!item.shortcut_text().is_empty()) {
                 painter.draw_text(item.rect().translated(-right_padding(), 0), item.shortcut_text(), Gfx::TextAlignment::CenterRight, text_color);
             }
+            painter.set_font(previous_font);
             if (item.is_submenu()) {
                 static auto& submenu_arrow_bitmap = Gfx::CharacterBitmap::create_from_ascii(s_submenu_arrow_bitmap_data, s_submenu_arrow_bitmap_width, s_submenu_arrow_bitmap_height).leak_ref();
-                Gfx::Rect submenu_arrow_rect {
+                Gfx::IntRect submenu_arrow_rect {
                     item.rect().right() - s_submenu_arrow_bitmap_width - 2,
                     0,
                     s_submenu_arrow_bitmap_width,
@@ -264,8 +269,8 @@ void Menu::draw()
                 painter.draw_bitmap(submenu_arrow_rect.location(), submenu_arrow_bitmap, text_color);
             }
         } else if (item.type() == MenuItem::Separator) {
-            Gfx::Point p1(item.rect().translated(stripe_rect.width() + 4, 0).x(), item.rect().center().y() - 1);
-            Gfx::Point p2(width - 7, item.rect().center().y() - 1);
+            Gfx::IntPoint p1(item.rect().translated(stripe_rect.width() + 4, 0).x(), item.rect().center().y() - 1);
+            Gfx::IntPoint p2(width - 7, item.rect().center().y() - 1);
             painter.draw_line(p1, p2, palette.threed_shadow1());
             painter.draw_line(p1.translated(0, 1), p2.translated(0, 1), palette.threed_highlight());
         }
@@ -279,12 +284,12 @@ MenuItem* Menu::hovered_item() const
     return const_cast<MenuItem*>(&item(m_hovered_item_index));
 }
 
-void Menu::update_for_new_hovered_item()
+void Menu::update_for_new_hovered_item(bool make_input)
 {
     if (hovered_item() && hovered_item()->is_submenu()) {
         ASSERT(menu_window());
         MenuManager::the().close_everyone_not_in_lineage(*hovered_item()->submenu());
-        hovered_item()->submenu()->popup(hovered_item()->rect().top_right().translated(menu_window()->rect().location()));
+        hovered_item()->submenu()->do_popup(hovered_item()->rect().top_right().translated(menu_window()->rect().location()), make_input);
     } else {
         MenuManager::the().close_everyone_not_in_lineage(*this);
         ensure_menu_window().set_visible(true);
@@ -308,7 +313,7 @@ void Menu::descend_into_submenu_at_hovered_item()
     ASSERT(hovered_item());
     auto submenu = hovered_item()->submenu();
     ASSERT(submenu);
-    MenuManager::the().open_menu(*submenu);
+    MenuManager::the().open_menu(*submenu, false);
     submenu->set_hovered_item(0);
     ASSERT(submenu->hovered_item()->type() != MenuItem::Separator);
 }
@@ -320,8 +325,8 @@ void Menu::handle_mouse_move_event(const MouseEvent& mouse_event)
     if (hovered_item() && hovered_item()->is_submenu()) {
 
         auto item = *hovered_item();
-        auto submenu_top_left = item.rect().location() + Gfx::Point { item.rect().width(), 0 };
-        auto submenu_bottom_left = submenu_top_left + Gfx::Point { 0, item.submenu()->menu_window()->height() };
+        auto submenu_top_left = item.rect().location() + Gfx::IntPoint { item.rect().width(), 0 };
+        auto submenu_bottom_left = submenu_top_left + Gfx::IntPoint { 0, item.submenu()->menu_window()->height() };
 
         auto safe_hover_triangle = Gfx::Triangle { m_last_position_in_hover, submenu_top_left, submenu_bottom_left };
         m_last_position_in_hover = mouse_event.position();
@@ -379,7 +384,7 @@ void Menu::event(Core::Event& event)
         // Default to the first item on key press if one has not been selected yet
         if (!hovered_item()) {
             m_hovered_item_index = 0;
-            update_for_new_hovered_item();
+            update_for_new_hovered_item(key == Key_Right);
             return;
         }
 
@@ -458,6 +463,19 @@ void Menu::did_activate(MenuItem& item)
         m_client->post_message(Messages::WindowClient::MenuItemActivated(m_menu_id, item.identifier()));
 }
 
+bool Menu::activate_default()
+{
+    for (auto& item : m_items) {
+        if (item.type() == MenuItem::Type::Separator)
+            continue;
+        if (item.is_enabled() && item.is_default()) {
+            did_activate(item);
+            return true;
+        }
+    }
+    return false;
+}
+
 MenuItem* Menu::item_with_identifier(unsigned identifer)
 {
     for (auto& item : m_items) {
@@ -467,7 +485,7 @@ MenuItem* Menu::item_with_identifier(unsigned identifer)
     return nullptr;
 }
 
-int Menu::item_index_at(const Gfx::Point& position)
+int Menu::item_index_at(const Gfx::IntPoint& position)
 {
     int i = 0;
     for (auto& item : m_items) {
@@ -489,7 +507,12 @@ void Menu::redraw_if_theme_changed()
         redraw();
 }
 
-void Menu::popup(const Gfx::Point& position)
+void Menu::popup(const Gfx::IntPoint& position)
+{
+    do_popup(position, true);
+}
+
+void Menu::do_popup(const Gfx::IntPoint& position, bool make_input)
 {
     if (is_empty()) {
         dbg() << "Menu: Empty menu popup";
@@ -500,7 +523,7 @@ void Menu::popup(const Gfx::Point& position)
     redraw_if_theme_changed();
 
     const int margin = 30;
-    Gfx::Point adjusted_pos = position;
+    Gfx::IntPoint adjusted_pos = position;
 
     if (adjusted_pos.x() + window.width() >= Screen::the().width() - margin) {
         adjusted_pos = adjusted_pos.translated(-window.width(), 0);
@@ -514,7 +537,7 @@ void Menu::popup(const Gfx::Point& position)
 
     window.move_to(adjusted_pos);
     window.set_visible(true);
-    MenuManager::the().open_menu(*this, false);
+    MenuManager::the().open_menu(*this, make_input);
     WindowManager::the().did_popup_a_menu({});
 }
 
@@ -523,7 +546,7 @@ bool Menu::is_menu_ancestor_of(const Menu& other) const
     for (auto& item : m_items) {
         if (!item.is_submenu())
             continue;
-        auto& submenu = *const_cast<MenuItem&>(item).submenu();
+        auto& submenu = *item.submenu();
         if (&submenu == &other)
             return true;
         if (submenu.is_menu_ancestor_of(other))

@@ -24,13 +24,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibCore/Timer.h>
 #include <LibGUI/DisplayLink.h>
 #include <LibGUI/MessageBox.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Function.h>
 #include <LibJS/Runtime/MarkedValueList.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Timer.h>
 #include <LibWeb/DOM/Window.h>
+#include <LibWeb/Frame/Frame.h>
+#include <LibWeb/PageView.h>
 
 namespace Web {
 
@@ -48,36 +51,65 @@ Window::~Window()
 {
 }
 
+void Window::set_wrapper(Badge<Bindings::WindowObject>, Bindings::WindowObject& wrapper)
+{
+    m_wrapper = wrapper.make_weak_ptr();
+}
+
 void Window::alert(const String& message)
 {
-    GUI::MessageBox::show(message, "Alert", GUI::MessageBox::Type::Information);
+    GUI::MessageBox::show(nullptr, message, "Alert", GUI::MessageBox::Type::Information);
 }
 
 bool Window::confirm(const String& message)
 {
-    auto confirm_result = GUI::MessageBox::show(message, "Confirm", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
+    auto confirm_result = GUI::MessageBox::show(nullptr, message, "Confirm", GUI::MessageBox::Type::Warning, GUI::MessageBox::InputType::OKCancel);
     return confirm_result == GUI::Dialog::ExecResult::ExecOK;
 }
 
-void Window::set_interval(JS::Function& callback, i32 interval)
+i32 Window::set_interval(JS::Function& callback, i32 interval)
 {
-    // FIXME: This leaks the interval timer and makes it unstoppable.
-    (void)Core::Timer::construct(interval, [handle = make_handle(&callback)] {
-        auto& function = const_cast<JS::Function&>(static_cast<const JS::Function&>(*handle.cell()));
-        auto& interpreter = function.interpreter();
-        interpreter.call(function);
-    }).leak_ref();
+    auto timer = Timer::create_interval(*this, interval, callback);
+    m_timers.set(timer->id(), timer);
+    return timer->id();
 }
 
-void Window::set_timeout(JS::Function& callback, i32 interval)
+i32 Window::set_timeout(JS::Function& callback, i32 interval)
 {
-    // FIXME: This leaks the interval timer and makes it unstoppable.
-    auto& timer = Core::Timer::construct(interval, [handle = make_handle(&callback)] {
-        auto& function = const_cast<JS::Function&>(static_cast<const JS::Function&>(*handle.cell()));
-        auto& interpreter = function.interpreter();
-        interpreter.call(function);
-    }).leak_ref();
-    timer.set_single_shot(true);
+    auto timer = Timer::create_timeout(*this, interval, callback);
+    m_timers.set(timer->id(), timer);
+    return timer->id();
+}
+
+void Window::timer_did_fire(Badge<Timer>, Timer& timer)
+{
+    // We should not be here if there's no JS wrapper for the Window object.
+    ASSERT(wrapper());
+
+    // NOTE: This protector pointer keeps the timer alive until the end of this function no matter what.
+    NonnullRefPtr protector(timer);
+
+    if (timer.type() == Timer::Type::Timeout) {
+        m_timers.remove(timer.id());
+    }
+
+    auto& interpreter = wrapper()->interpreter();
+    interpreter.call(timer.callback(), wrapper());
+}
+
+i32 Window::allocate_timer_id(Badge<Timer>)
+{
+    return m_timer_id_allocator.allocate();
+}
+
+void Window::clear_timeout(i32 timer_id)
+{
+    m_timers.remove(timer_id);
+}
+
+void Window::clear_interval(i32 timer_id)
+{
+    m_timers.remove(timer_id);
 }
 
 i32 Window::request_animation_frame(JS::Function& callback)
@@ -103,6 +135,22 @@ void Window::cancel_animation_frame(i32 id)
 {
     // FIXME: We should not be passing untrusted numbers to DisplayLink::unregister_callback()!
     GUI::DisplayLink::unregister_callback(id);
+}
+
+void Window::did_set_location_href(Badge<Bindings::LocationObject>, const String& new_href)
+{
+    auto* frame = document().frame();
+    if (!frame)
+        return;
+    frame->loader().load(new_href, FrameLoader::Type::Navigation);
+}
+
+void Window::did_call_location_reload(Badge<Bindings::LocationObject>)
+{
+    auto* frame = document().frame();
+    if (!frame)
+        return;
+    frame->loader().load(document().url(), FrameLoader::Type::Reload);
 }
 
 }

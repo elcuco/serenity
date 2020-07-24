@@ -30,12 +30,13 @@
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
 #include <AK/Utf8View.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <alloca.h>
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -208,7 +209,6 @@ void exit(int status)
     fflush(stdout);
     fflush(stderr);
     _exit(status);
-    ASSERT_NOT_REACHED();
 }
 
 static void __atexit_to_cxa_atexit(void* handler)
@@ -223,8 +223,11 @@ int atexit(void (*handler)())
 
 void abort()
 {
+    // For starters, send ourselves a SIGABRT.
     raise(SIGABRT);
-    ASSERT_NOT_REACHED();
+    // If that didn't kill us, try harder.
+    raise(SIGKILL);
+    _exit(127);
 }
 
 static HashTable<const char*> s_malloced_environment_variables;
@@ -704,16 +707,10 @@ int system(const char* command)
     if (!command)
         return 1;
 
-    auto child = fork();
-    if (child < 0)
+    pid_t child;
+    const char* argv[] = { "sh", "-c", command, nullptr };
+    if ((errno = posix_spawn(&child, "/bin/sh", nullptr, nullptr, const_cast<char**>(argv), environ)))
         return -1;
-
-    if (!child) {
-        int rc = execl("/bin/sh", "sh", "-c", command, nullptr);
-        ASSERT(rc < 0);
-        perror("execl");
-        exit(127);
-    }
     int wstatus;
     waitpid(child, &wstatus, 0);
     return WEXITSTATUS(wstatus);
@@ -929,6 +926,9 @@ long long strtoll(const char* str, char** endptr, int base)
         return 0;
     }
 
+    if (endptr)
+        *endptr = parse_ptr;
+
     if (overflow) {
         errno = ERANGE;
         if (sign != Sign::Negative) {
@@ -1002,6 +1002,9 @@ unsigned long long strtoull(const char* str, char** endptr, int base)
             *endptr = const_cast<char*>(str);
         return 0;
     }
+
+    if (endptr)
+        *endptr = parse_ptr;
 
     if (overflow) {
         errno = ERANGE;

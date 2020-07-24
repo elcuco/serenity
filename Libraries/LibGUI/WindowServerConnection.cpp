@@ -25,6 +25,7 @@
  */
 
 #include <AK/SharedBuffer.h>
+#include <AK/StringBuilder.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/MimeData.h>
 #include <LibGUI/Action.h>
@@ -33,6 +34,7 @@
 #include <LibGUI/Desktop.h>
 #include <LibGUI/DisplayLink.h>
 #include <LibGUI/DragOperation.h>
+#include <LibGUI/EmojiInputDialog.h>
 #include <LibGUI/Event.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/Widget.h>
@@ -41,6 +43,8 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
+
+//#define KEYBOARD_SHORTCUTS_DEBUG
 
 namespace GUI {
 
@@ -57,7 +61,7 @@ static void set_system_theme_from_shbuf_id(int id)
     auto system_theme = SharedBuffer::create_from_shbuf_id(id);
     ASSERT(system_theme);
     Gfx::set_system_theme(*system_theme);
-    Application::the().set_system_palette(*system_theme);
+    Application::the()->set_system_palette(*system_theme);
 }
 
 void WindowServerConnection::handshake()
@@ -102,6 +106,18 @@ void WindowServerConnection::handle(const Messages::WindowClient::WindowDeactiva
         Core::EventLoop::current().post_event(*window, make<Event>(Event::WindowBecameInactive));
 }
 
+void WindowServerConnection::handle(const Messages::WindowClient::WindowInputEntered& message)
+{
+    if (auto* window = Window::from_window_id(message.window_id()))
+        Core::EventLoop::current().post_event(*window, make<Event>(Event::WindowInputEntered));
+}
+
+void WindowServerConnection::handle(const Messages::WindowClient::WindowInputLeft& message)
+{
+    if (auto* window = Window::from_window_id(message.window_id()))
+        Core::EventLoop::current().post_event(*window, make<Event>(Event::WindowInputLeft));
+}
+
 void WindowServerConnection::handle(const Messages::WindowClient::WindowCloseRequest& message)
 {
     if (auto* window = Window::from_window_id(message.window_id()))
@@ -126,29 +142,55 @@ void WindowServerConnection::handle(const Messages::WindowClient::KeyDown& messa
     if (!window)
         return;
 
-    auto key_event = make<KeyEvent>(Event::KeyDown, message.key(), message.modifiers());
-    if (message.character() != '\0') {
-        char ch = message.character();
-        key_event->m_text = String(&ch, 1);
-    }
-
+    auto key_event = make<KeyEvent>(Event::KeyDown, (KeyCode)message.key(), message.modifiers(), message.code_point(), message.scancode());
     Action* action = nullptr;
 
+#ifdef KEYBOARD_SHORTCUTS_DEBUG
+    dbg() << "Looking up action for " << key_event->to_string();
+#endif
+
     if (auto* focused_widget = window->focused_widget()) {
-        for (auto* widget = focused_widget; widget && !action; widget = widget->parent_widget())
-            action = focused_widget->action_for_key_event(*key_event);
+        for (auto* widget = focused_widget; widget && !action; widget = widget->parent_widget()) {
+            action = widget->action_for_key_event(*key_event);
+#ifdef KEYBOARD_SHORTCUTS_DEBUG
+            dbg() << "  > Focused widget " << *widget << " gave action: " << action;
+#endif
+        }
     }
 
-    if (!action)
+    if (!action) {
         action = window->action_for_key_event(*key_event);
+#ifdef KEYBOARD_SHORTCUTS_DEBUG
+        dbg() << "  > Asked window " << *window << ", got action: " << action;
+#endif
+    }
 
-    if (!action)
-        action = Application::the().action_for_key_event(*key_event);
+    if (!action) {
+        action = Application::the()->action_for_key_event(*key_event);
+#ifdef KEYBOARD_SHORTCUTS_DEBUG
+        dbg() << "  > Asked application, got action: " << action;
+#endif
+    }
 
     if (action && action->is_enabled()) {
         action->activate();
         return;
     }
+
+    bool focused_widget_accepts_emoji_input = window->focused_widget() && window->focused_widget()->accepts_emoji_input();
+    if (focused_widget_accepts_emoji_input && (message.modifiers() == (Mod_Ctrl | Mod_Alt)) && message.key() == Key_Space) {
+        auto emoji_input_dialog = EmojiInputDialog::construct(window);
+        if (emoji_input_dialog->exec() != EmojiInputDialog::ExecOK)
+            return;
+        key_event->m_key = Key_Invalid;
+        key_event->m_modifiers = 0;
+
+        AK::Utf8View m_utf8_view(emoji_input_dialog->selected_emoji_text().characters());
+        u32 code_point = *m_utf8_view.begin();
+
+        key_event->m_code_point = code_point;
+    }
+
     Core::EventLoop::current().post_event(*window, move(key_event));
 }
 
@@ -158,12 +200,7 @@ void WindowServerConnection::handle(const Messages::WindowClient::KeyUp& message
     if (!window)
         return;
 
-    auto key_event = make<KeyEvent>(Event::KeyUp, message.key(), message.modifiers());
-    if (message.character() != '\0') {
-        char ch = message.character();
-        key_event->m_text = String(&ch, 1);
-    }
-
+    auto key_event = make<KeyEvent>(Event::KeyUp, (KeyCode)message.key(), message.modifiers(), message.code_point(), message.scancode());
     Core::EventLoop::current().post_event(*window, move(key_event));
 }
 
@@ -236,7 +273,7 @@ void WindowServerConnection::handle(const Messages::WindowClient::MenuItemActiva
 void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowStateChanged& message)
 {
     if (auto* window = Window::from_window_id(message.wm_id()))
-        Core::EventLoop::current().post_event(*window, make<WMWindowStateChangedEvent>(message.client_id(), message.window_id(), message.title(), message.rect(), message.is_active(), static_cast<WindowType>(message.window_type()), message.is_minimized(), message.is_frameless()));
+        Core::EventLoop::current().post_event(*window, make<WMWindowStateChangedEvent>(message.client_id(), message.window_id(), message.parent_client_id(), message.parent_window_id(), message.title(), message.rect(), message.is_active(), message.is_modal(), static_cast<WindowType>(message.window_type()), message.is_minimized(), message.is_frameless(), message.progress()));
 }
 
 void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowRectChanged& message)
@@ -260,11 +297,6 @@ void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowRemov
 void WindowServerConnection::handle(const Messages::WindowClient::ScreenRectChanged& message)
 {
     Desktop::the().did_receive_screen_rect({}, message.rect());
-}
-
-void WindowServerConnection::handle(const Messages::WindowClient::ClipboardContentsChanged& message)
-{
-    Clipboard::the().did_receive_clipboard_contents_changed({}, message.content_type());
 }
 
 void WindowServerConnection::handle(const Messages::WindowClient::AsyncSetWallpaperFinished&)
@@ -307,6 +339,11 @@ void WindowServerConnection::handle(const Messages::WindowClient::DisplayLinkNot
         DisplayLink::notify({});
         m_display_link_notification_pending = false;
     });
+}
+
+void WindowServerConnection::handle(const Messages::WindowClient::Ping&)
+{
+    post_message(Messages::WindowServer::Pong());
 }
 
 }

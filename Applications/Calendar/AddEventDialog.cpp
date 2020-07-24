@@ -107,7 +107,7 @@ AddEventDialog::AddEventDialog(RefPtr<Calendar> calendar, Core::DateTime date_ti
     auto& ok_button = button_container.add<GUI::Button>("OK");
     ok_button.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     ok_button.set_preferred_size(80, 20);
-    ok_button.on_click = [this] {
+    ok_button.on_click = [this](auto) {
         dbg() << "TODO: Add event icon on specific tile";
         done(Dialog::ExecOK);
     };
@@ -144,11 +144,6 @@ String AddEventDialog::MonthListModel::column_name(int column) const
     default:
         ASSERT_NOT_REACHED();
     }
-}
-
-GUI::Model::ColumnMetadata AddEventDialog::MonthListModel::column_metadata([[maybe_unused]] int column) const
-{
-    return {};
 }
 
 GUI::Variant AddEventDialog::MonthListModel::data(const GUI::ModelIndex& index, Role role) const

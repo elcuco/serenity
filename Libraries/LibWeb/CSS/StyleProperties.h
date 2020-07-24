@@ -30,6 +30,7 @@
 #include <AK/NonnullRefPtr.h>
 #include <LibGfx/Font.h>
 #include <LibGfx/Forward.h>
+#include <LibWeb/CSS/LengthBox.h>
 #include <LibWeb/CSS/StyleValue.h>
 
 namespace Web {
@@ -52,11 +53,17 @@ public:
     }
 
     void set_property(CSS::PropertyID, NonnullRefPtr<StyleValue> value);
+    void set_property(CSS::PropertyID, const StringView&);
     Optional<NonnullRefPtr<StyleValue>> property(CSS::PropertyID) const;
 
     Length length_or_fallback(CSS::PropertyID, const Length& fallback) const;
+    LengthBox length_box(CSS::PropertyID left_id, CSS::PropertyID top_id, CSS::PropertyID right_id, CSS::PropertyID bottom_id) const;
     String string_or_fallback(CSS::PropertyID, const StringView& fallback) const;
     Color color_or_fallback(CSS::PropertyID, const Document&, Color fallback) const;
+    CSS::TextAlign text_align() const;
+    CSS::Display display() const;
+    Optional<CSS::Float> float_() const;
+    Optional<CSS::WhiteSpace> white_space() const;
 
     const Gfx::Font& font() const
     {
@@ -65,12 +72,13 @@ public:
         return *m_font;
     }
 
-    float line_height() const;
+    float line_height(const LayoutNode&) const;
 
     bool operator==(const StyleProperties&) const;
     bool operator!=(const StyleProperties& other) const { return !(*this == other); }
 
     CSS::Position position() const;
+    Optional<int> z_index() const;
 
 private:
     HashMap<unsigned, NonnullRefPtr<StyleValue>> m_property_values;

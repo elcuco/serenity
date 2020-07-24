@@ -26,36 +26,28 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/Cell.h>
+#include <LibJS/Runtime/PropertyAttributes.h>
+#include <LibJS/Runtime/StringOrSymbol.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-struct Attribute {
-    enum {
-        Configurable = 1 << 0,
-        Enumerable = 1 << 1,
-        Writable = 1 << 2,
-    };
-};
-
 struct PropertyMetadata {
     size_t offset { 0 };
-    u8 attributes { 0 };
+    PropertyAttributes attributes { 0 };
 };
 
 struct TransitionKey {
-    FlyString property_name;
-    u8 attributes { 0 };
+    StringOrSymbol property_name;
+    PropertyAttributes attributes { 0 };
 
     bool operator==(const TransitionKey& other) const
     {
-        return property_name == other.property_name
-            && attributes == other.attributes;
+        return property_name == other.property_name && attributes == other.attributes;
     }
 };
 
@@ -70,26 +62,28 @@ public:
         Prototype,
     };
 
-    Shape();
-    Shape(Shape* previous_shape, const FlyString& property_name, u8 attributes, TransitionType);
-    Shape(Shape* previous_shape, Object* new_prototype);
+    explicit Shape(GlobalObject&);
+    Shape(Shape& previous_shape, const StringOrSymbol& property_name, PropertyAttributes attributes, TransitionType);
+    Shape(Shape& previous_shape, Object* new_prototype);
 
-    Shape* create_put_transition(const FlyString& name, u8 attributes);
-    Shape* create_configure_transition(const FlyString& name, u8 attributes);
+    Shape* create_put_transition(const StringOrSymbol&, PropertyAttributes attributes);
+    Shape* create_configure_transition(const StringOrSymbol&, PropertyAttributes attributes);
     Shape* create_prototype_transition(Object* new_prototype);
 
     bool is_unique() const { return m_unique; }
     Shape* create_unique_clone() const;
 
+    GlobalObject& global_object() const { return m_global_object; }
+
     Object* prototype() { return m_prototype; }
     const Object* prototype() const { return m_prototype; }
 
-    Optional<PropertyMetadata> lookup(const FlyString&) const;
-    const HashMap<FlyString, PropertyMetadata>& property_table() const;
+    Optional<PropertyMetadata> lookup(const StringOrSymbol&) const;
+    const HashMap<StringOrSymbol, PropertyMetadata>& property_table() const;
     size_t property_count() const;
 
     struct Property {
-        FlyString key;
+        StringOrSymbol key;
         PropertyMetadata value;
     };
 
@@ -97,9 +91,9 @@ public:
 
     void set_prototype_without_transition(Object* new_prototype) { m_prototype = new_prototype; }
 
-    void remove_property_from_unique_shape(const FlyString&, size_t offset);
-    void add_property_to_unique_shape(const FlyString&, u8 attributes);
-    void reconfigure_property_in_unique_shape(const FlyString& property_name, u8 attributes);
+    void remove_property_from_unique_shape(const StringOrSymbol&, size_t offset);
+    void add_property_to_unique_shape(const StringOrSymbol&, PropertyAttributes attributes);
+    void reconfigure_property_in_unique_shape(const StringOrSymbol& property_name, PropertyAttributes attributes);
 
 private:
     virtual const char* class_name() const override { return "Shape"; }
@@ -107,12 +101,14 @@ private:
 
     void ensure_property_table() const;
 
-    mutable OwnPtr<HashMap<FlyString, PropertyMetadata>> m_property_table;
+    GlobalObject& m_global_object;
+
+    mutable OwnPtr<HashMap<StringOrSymbol, PropertyMetadata>> m_property_table;
 
     HashMap<TransitionKey, Shape*> m_forward_transitions;
     Shape* m_previous { nullptr };
-    FlyString m_property_name;
-    u8 m_attributes { 0 };
+    StringOrSymbol m_property_name;
+    PropertyAttributes m_attributes { 0 };
     bool m_unique { false };
     Object* m_prototype { nullptr };
     TransitionType m_transition_type { TransitionType::Invalid };
@@ -124,6 +120,6 @@ template<>
 struct AK::Traits<JS::TransitionKey> : public GenericTraits<JS::TransitionKey> {
     static unsigned hash(const JS::TransitionKey& key)
     {
-        return pair_int_hash(int_hash(key.attributes), key.property_name.hash());
+        return pair_int_hash(key.attributes.bits(), Traits<JS::StringOrSymbol>::hash(key.property_name));
     }
 };

@@ -31,18 +31,19 @@
 #include <LibJS/Runtime/Object.h>
 #include <LibWeb/Forward.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
 class Wrapper
     : public JS::Object
     , public Weakable<Wrapper> {
+    JS_OBJECT(Wrapper, JS::Object);
+
+public:
 protected:
     explicit Wrapper(Object& prototype)
-        : Object(&prototype)
+        : Object(prototype)
     {
     }
 };
 
-}
 }

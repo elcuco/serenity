@@ -45,51 +45,36 @@ HTMLCanvasElement::~HTMLCanvasElement()
 {
 }
 
-int HTMLCanvasElement::requested_width() const
+unsigned HTMLCanvasElement::width() const
 {
-    bool ok = false;
-    unsigned width = attribute("width").to_int(ok);
-    if (ok)
-        return width;
-
-    return 300;
+    return attribute(HTML::AttributeNames::width).to_uint().value_or(300);
 }
 
-int HTMLCanvasElement::requested_height() const
+unsigned HTMLCanvasElement::height() const
 {
-    bool ok = false;
-    unsigned height = attribute("height").to_int(ok);
-    if (ok)
-        return height;
-
-    return 150;
+    return attribute(HTML::AttributeNames::height).to_uint().value_or(150);
 }
 
-RefPtr<LayoutNode> HTMLCanvasElement::create_layout_node(const StyleProperties* parent_style) const
+RefPtr<LayoutNode> HTMLCanvasElement::create_layout_node(const StyleProperties* parent_style)
 {
     auto style = document().style_resolver().resolve_style(*this, parent_style);
-    auto display = style->string_or_fallback(CSS::PropertyID::Display, "inline");
-    if (display == "none")
+    if (style->display() == CSS::Display::None)
         return nullptr;
-    return adopt(*new LayoutCanvas(*this, move(style)));
+    return adopt(*new LayoutCanvas(document(), *this, move(style)));
 }
 
 CanvasRenderingContext2D* HTMLCanvasElement::get_context(String type)
 {
-    ASSERT(type.to_lowercase() == "2d");
+    ASSERT(type == "2d");
     if (!m_context)
         m_context = CanvasRenderingContext2D::create(*this);
     return m_context;
 }
 
-static Gfx::Size bitmap_size_for_canvas(const HTMLCanvasElement& canvas)
+static Gfx::IntSize bitmap_size_for_canvas(const HTMLCanvasElement& canvas)
 {
-    int width = canvas.requested_width();
-    int height = canvas.requested_height();
-    if (width < 0 || height < 0) {
-        dbg() << "Refusing to create canvas with negative size";
-        return {};
-    }
+    auto width = canvas.width();
+    auto height = canvas.height();
 
     Checked<size_t> area = width;
     area *= height;
@@ -102,7 +87,7 @@ static Gfx::Size bitmap_size_for_canvas(const HTMLCanvasElement& canvas)
         dbg() << "Refusing to create " << width << "x" << height << " canvas (exceeds maximum size)";
         return {};
     }
-    return { width, height };
+    return Gfx::IntSize(width, height);
 }
 
 bool HTMLCanvasElement::create_bitmap()

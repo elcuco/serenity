@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "ClientConnection.h"
 #include <AK/Badge.h>
 #include <LibGfx/CharacterBitmap.h>
 #include <LibGfx/Font.h>
@@ -37,8 +38,6 @@
 #include <WindowServer/WindowManager.h>
 
 namespace WindowServer {
-
-static const int window_titlebar_height = 19;
 
 static const char* s_close_button_bitmap_data = {
     "##    ##"
@@ -150,32 +149,33 @@ void WindowFrame::did_set_maximized(Badge<Window>, bool maximized)
     m_maximize_button->set_bitmap(maximized ? *s_unmaximize_button_bitmap : *s_maximize_button_bitmap);
 }
 
-Gfx::Rect WindowFrame::title_bar_rect() const
+Gfx::IntRect WindowFrame::title_bar_rect() const
 {
+    auto window_titlebar_height = WindowManager::the().palette().window_title_height();
     if (m_window.type() == WindowType::Notification)
         return { m_window.width() + 3, 3, window_titlebar_height, m_window.height() };
     return { 4, 4, m_window.width(), window_titlebar_height };
 }
 
-Gfx::Rect WindowFrame::title_bar_icon_rect() const
+Gfx::IntRect WindowFrame::title_bar_icon_rect() const
 {
     auto titlebar_rect = title_bar_rect();
     return {
-        titlebar_rect.x() + 1,
+        titlebar_rect.x() + 2,
         titlebar_rect.y() + 2,
         16,
         titlebar_rect.height(),
     };
 }
 
-Gfx::Rect WindowFrame::title_bar_text_rect() const
+Gfx::IntRect WindowFrame::title_bar_text_rect() const
 {
     auto titlebar_rect = title_bar_rect();
     auto titlebar_icon_rect = title_bar_icon_rect();
     return {
-        titlebar_rect.x() + 2 + titlebar_icon_rect.width() + 2,
+        titlebar_rect.x() + 3 + titlebar_icon_rect.width() + 2,
         titlebar_rect.y(),
-        titlebar_rect.width() - 4 - titlebar_icon_rect.width() - 2,
+        titlebar_rect.width() - 5 - titlebar_icon_rect.width() - 2,
         titlebar_rect.height()
     };
 }
@@ -188,7 +188,7 @@ WindowFrame::FrameColors WindowFrame::compute_frame_colors() const
         return { palette.highlight_window_title(), palette.highlight_window_border1(), palette.highlight_window_border2() };
     if (&m_window == wm.m_move_window)
         return { palette.moving_window_title(), palette.moving_window_border1(), palette.moving_window_border2() };
-    if (&m_window == wm.m_active_window)
+    if (wm.is_active_window_or_accessory(m_window))
         return { palette.active_window_title(), palette.active_window_border1(), palette.active_window_border2() };
     return { palette.inactive_window_title(), palette.inactive_window_border1(), palette.inactive_window_border2() };
 }
@@ -196,7 +196,7 @@ WindowFrame::FrameColors WindowFrame::compute_frame_colors() const
 void WindowFrame::paint_notification_frame(Gfx::Painter& painter)
 {
     auto palette = WindowManager::the().palette();
-    Gfx::Rect outer_rect = { {}, rect().size() };
+    Gfx::IntRect outer_rect = { {}, rect().size() };
 
     Gfx::StylePainter::paint_window_frame(painter, outer_rect, palette);
 
@@ -206,8 +206,8 @@ void WindowFrame::paint_notification_frame(Gfx::Painter& painter)
     int stripe_top = m_buttons.last().relative_rect().bottom() + 4;
     int stripe_bottom = m_window.height() - 3;
     if (stripe_top && stripe_bottom && stripe_top < stripe_bottom) {
-        for (int i = 2; i <= window_titlebar_height - 2; i += 2) {
-            painter.draw_line({ titlebar_rect.x() + i, stripe_top }, { titlebar_rect.x() + i, stripe_bottom }, palette.active_window_border1());
+        for (int i = 2; i <= palette.window_title_height() - 2; i += 2) {
+            painter.draw_line({ titlebar_rect.x() + i, stripe_top }, { titlebar_rect.x() + i, stripe_bottom }, palette.window_title_stripes());
         }
     }
 }
@@ -216,7 +216,16 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
 {
     auto palette = WindowManager::the().palette();
     auto& window = m_window;
-    Gfx::Rect outer_rect = { {}, rect().size() };
+    Gfx::IntRect outer_rect = { {}, rect().size() };
+    String title_text;
+    if (window.client() && window.client()->is_unresponsive()) {
+        StringBuilder builder;
+        builder.append(window.title());
+        builder.append(" (Not responding)");
+        title_text = builder.to_string();
+    } else {
+        title_text = window.title();
+    }
 
     Gfx::StylePainter::paint_window_frame(painter, outer_rect, palette);
 
@@ -224,7 +233,7 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
     auto titlebar_icon_rect = title_bar_icon_rect();
     auto titlebar_inner_rect = title_bar_text_rect();
     auto titlebar_title_rect = titlebar_inner_rect;
-    titlebar_title_rect.set_width(Gfx::Font::default_bold_font().width(window.title()));
+    titlebar_title_rect.set_width(Gfx::Font::default_bold_font().width(title_text));
 
     auto [title_color, border_color, border_color2] = compute_frame_colors();
 
@@ -232,7 +241,7 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
     painter.draw_line(titlebar_rect.bottom_left().translated(0, 1), titlebar_rect.bottom_right().translated(0, 1), palette.button());
     painter.draw_line(titlebar_rect.bottom_left().translated(0, 2), titlebar_rect.bottom_right().translated(0, 2), palette.button());
 
-    auto leftmost_button_rect = m_buttons.is_empty() ? Gfx::Rect() : m_buttons.last().relative_rect();
+    auto leftmost_button_rect = m_buttons.is_empty() ? Gfx::IntRect() : m_buttons.last().relative_rect();
 
     painter.fill_rect_with_gradient(titlebar_rect, border_color, border_color2);
 
@@ -240,16 +249,16 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
     int stripe_right = leftmost_button_rect.left() - 3;
     if (stripe_left && stripe_right && stripe_left < stripe_right) {
         for (int i = 2; i <= titlebar_inner_rect.height() - 2; i += 2) {
-            painter.draw_line({ stripe_left, titlebar_inner_rect.y() + i }, { stripe_right, titlebar_inner_rect.y() + i }, border_color);
+            painter.draw_line({ stripe_left, titlebar_inner_rect.y() + i }, { stripe_right, titlebar_inner_rect.y() + i }, palette.window_title_stripes());
         }
     }
 
     auto clipped_title_rect = titlebar_title_rect;
     clipped_title_rect.set_width(stripe_right - clipped_title_rect.x());
     if (!clipped_title_rect.is_empty()) {
-        painter.draw_text(clipped_title_rect.translated(1, 2), window.title(), wm.window_title_font(), Gfx::TextAlignment::CenterLeft, border_color.darkened(0.4), Gfx::TextElision::Right);
+        painter.draw_text(clipped_title_rect.translated(1, 2), title_text, wm.window_title_font(), Gfx::TextAlignment::CenterLeft, palette.window_title_shadow(), Gfx::TextElision::Right);
         // FIXME: The translated(0, 1) wouldn't be necessary if we could center text based on its baseline.
-        painter.draw_text(clipped_title_rect.translated(0, 1), window.title(), wm.window_title_font(), Gfx::TextAlignment::CenterLeft, title_color, Gfx::TextElision::Right);
+        painter.draw_text(clipped_title_rect.translated(0, 1), title_text, wm.window_title_font(), Gfx::TextAlignment::CenterLeft, title_color, Gfx::TextElision::Right);
     }
 
     painter.blit(titlebar_icon_rect.location(), window.icon(), window.icon().rect());
@@ -275,12 +284,13 @@ void WindowFrame::paint(Gfx::Painter& painter)
     }
 }
 
-static Gfx::Rect frame_rect_for_window(Window& window, const Gfx::Rect& rect)
+static Gfx::IntRect frame_rect_for_window(Window& window, const Gfx::IntRect& rect)
 {
     if (window.is_frameless())
         return rect;
 
     auto type = window.type();
+    auto window_titlebar_height = WindowManager::the().palette().window_title_height();
 
     switch (type) {
     case WindowType::Normal:
@@ -302,25 +312,26 @@ static Gfx::Rect frame_rect_for_window(Window& window, const Gfx::Rect& rect)
     }
 }
 
-static Gfx::Rect frame_rect_for_window(Window& window)
+static Gfx::IntRect frame_rect_for_window(Window& window)
 {
     return frame_rect_for_window(window, window.rect());
 }
 
-Gfx::Rect WindowFrame::rect() const
+Gfx::IntRect WindowFrame::rect() const
 {
     return frame_rect_for_window(m_window);
 }
 
 void WindowFrame::invalidate_title_bar()
 {
-    WindowManager::the().invalidate(title_bar_rect().translated(rect().location()));
+    Compositor::the().invalidate(title_bar_rect().translated(rect().location()));
 }
 
-void WindowFrame::notify_window_rect_changed(const Gfx::Rect& old_rect, const Gfx::Rect& new_rect)
+void WindowFrame::notify_window_rect_changed(const Gfx::IntRect& old_rect, const Gfx::IntRect& new_rect)
 {
-    int window_button_width = 15;
-    int window_button_height = 15;
+    auto palette = WindowManager::the().palette();
+    int window_button_width = palette.window_title_button_width();
+    int window_button_height = palette.window_title_button_height();
     int pos;
     if (m_window.type() == WindowType::Notification)
         pos = title_bar_rect().top() + 2;
@@ -329,13 +340,14 @@ void WindowFrame::notify_window_rect_changed(const Gfx::Rect& old_rect, const Gf
 
     for (auto& button : m_buttons) {
         if (m_window.type() == WindowType::Notification) {
-            Gfx::Rect rect { 0, pos, window_button_width, window_button_height };
+            // The button height & width have to be equal or it leaks out of its area
+            Gfx::IntRect rect { 0, pos, window_button_height, window_button_height };
             rect.center_horizontally_within(title_bar_rect());
             button.set_relative_rect(rect);
-            pos += window_button_width;
+            pos += window_button_height;
         } else {
             pos -= window_button_width;
-            Gfx::Rect rect { pos, 0, window_button_width, window_button_height };
+            Gfx::IntRect rect { pos, 0, window_button_width, window_button_height };
             rect.center_vertically_within(title_bar_text_rect());
             button.set_relative_rect(rect);
         }
@@ -358,10 +370,36 @@ void WindowFrame::on_mouse_event(const MouseEvent& event)
     if (m_window.type() != WindowType::Normal && m_window.type() != WindowType::Notification)
         return;
 
-    if (m_window.type() == WindowType::Normal && event.type() == Event::MouseDown && (event.button() == MouseButton::Left || event.button() == MouseButton::Right) && title_bar_icon_rect().contains(event.position())) {
-        wm.move_to_front_and_make_active(m_window);
-        m_window.popup_window_menu(title_bar_rect().bottom_left().translated(rect().location()));
-        return;
+    if (m_window.type() == WindowType::Normal && title_bar_icon_rect().contains(event.position())) {
+        if (event.type() == Event::MouseDown)
+            wm.move_to_front_and_make_active(m_window);
+        if (event.type() == Event::MouseDown && (event.button() == MouseButton::Left || event.button() == MouseButton::Right)) {
+            // Manually start a potential double click. Since we're opening
+            // a menu, we will only receive the MouseDown event, so we
+            // need to record that fact. If the user subsequently clicks
+            // on the same area, the menu will get closed, and we will
+            // receive a MouseUp event, but because windows have changed
+            // we don't get a MouseDoubleClick event. We can however record
+            // this click, and when we receive the MouseUp event check if
+            // it would have been considered a double click, if it weren't
+            // for the fact that we opened and closed a window in the meanwhile
+            auto& wm = WindowManager::the();
+            wm.start_menu_doubleclick(m_window, event);
+
+            m_window.popup_window_menu(title_bar_rect().bottom_left().translated(rect().location()), WindowMenuDefaultAction::Close);
+            return;
+        } else if (event.type() == Event::MouseUp && event.button() == MouseButton::Left) {
+            // Since the MouseDown event opened a menu, another MouseUp
+            // from the second click outside the menu wouldn't be considered 
+            // a double click, so let's manually check if it would otherwise
+            // have been be considered to be one
+            auto& wm = WindowManager::the();
+            if (wm.is_menu_doubleclick(m_window, event)) {
+                // It is a double click, so perform activate the default item
+                m_window.window_menu_activate_default();
+            }
+            return;
+        }
     }
 
     // This is slightly hackish, but expand the title bar rect by two pixels downwards,
@@ -382,7 +420,8 @@ void WindowFrame::on_mouse_event(const MouseEvent& event)
         }
         if (event.type() == Event::MouseDown) {
             if (m_window.type() == WindowType::Normal && event.button() == MouseButton::Right) {
-                m_window.popup_window_menu(event.position().translated(rect().location()));
+                auto default_action = m_window.is_maximized() ? WindowMenuDefaultAction::Restore : WindowMenuDefaultAction::Maximize;
+                m_window.popup_window_menu(event.position().translated(rect().location()), default_action);
                 return;
             }
             if (m_window.is_movable() && event.button() == MouseButton::Left)
@@ -397,7 +436,7 @@ void WindowFrame::on_mouse_event(const MouseEvent& event)
             { ResizeDirection::Left, ResizeDirection::None, ResizeDirection::Right },
             { ResizeDirection::DownLeft, ResizeDirection::Down, ResizeDirection::DownRight },
         };
-        Gfx::Rect outer_rect = { {}, rect().size() };
+        Gfx::IntRect outer_rect = { {}, rect().size() };
         ASSERT(outer_rect.contains(event.position()));
         int window_relative_x = event.x() - outer_rect.x();
         int window_relative_y = event.y() - outer_rect.y();

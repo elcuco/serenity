@@ -25,19 +25,24 @@
  */
 
 #include <AK/ByteBuffer.h>
-#include <AK/FileSystemPath.h>
+#include <AK/LexicalPath.h>
 #include <AK/MappedFile.h>
 #include <AK/NetworkOrdered.h>
 #include <LibCore/puff.h>
 #include <LibGfx/PNGLoader.h>
 #include <LibM/math.h>
 #include <fcntl.h>
-#include <serenity.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#ifdef __serenity__
+#    include <serenity.h>
+#endif
+
+//#define PNG_DEBUG
 
 namespace Gfx {
 
@@ -68,38 +73,33 @@ struct [[gnu::packed]] PaletteEntry
     //u8 a;
 };
 
+template<typename T>
 struct [[gnu::packed]] Tuple
 {
-    u8 gray;
-    u8 a;
+    T gray;
+    T a;
 };
 
-struct [[gnu::packed]] Tuple16
-{
-    u16 gray;
-    u16 a;
-};
-
+template<typename T>
 struct [[gnu::packed]] Triplet
 {
-    u8 r;
-    u8 g;
-    u8 b;
+    T r;
+    T g;
+    T b;
 };
 
-struct [[gnu::packed]] Triplet16
+template<typename T>
+struct [[gnu::packed]] Quad
 {
-    u16 r;
-    u16 g;
-    u16 b;
+    T r;
+    T g;
+    T b;
+    T a;
 };
 
-struct [[gnu::packed]] Quad16
-{
-    u16 r;
-    u16 g;
-    u16 b;
-    u16 a;
+enum PngInterlaceMethod {
+    Null = 0,
+    Adam7 = 1
 };
 
 struct PNGLoadingContext {
@@ -127,7 +127,7 @@ struct PNGLoadingContext {
     Vector<Scanline> scanlines;
     RefPtr<Gfx::Bitmap> bitmap;
     u8* decompression_buffer { nullptr };
-    int decompression_buffer_size { 0 };
+    size_t decompression_buffer_size { 0 };
     Vector<u8> compressed_data;
     Vector<PaletteEntry> palette_data;
     Vector<u8> palette_transparency_data;
@@ -135,10 +135,8 @@ struct PNGLoadingContext {
 
 class Streamer {
 public:
-    Streamer(const u8* data, int size)
-        : m_original_data(data)
-        , m_original_size(size)
-        , m_data_ptr(data)
+    Streamer(const u8* data, size_t size)
+        : m_data_ptr(data)
         , m_size_remaining(size)
     {
     }
@@ -146,7 +144,7 @@ public:
     template<typename T>
     bool read(T& value)
     {
-        if (m_size_remaining < (int)sizeof(T))
+        if (m_size_remaining < sizeof(T))
             return false;
         value = *((const NetworkOrdered<T>*)m_data_ptr);
         m_data_ptr += sizeof(T);
@@ -154,7 +152,7 @@ public:
         return true;
     }
 
-    bool read_bytes(u8* buffer, int count)
+    bool read_bytes(u8* buffer, size_t count)
     {
         if (m_size_remaining < count)
             return false;
@@ -164,7 +162,7 @@ public:
         return true;
     }
 
-    bool wrap_bytes(ByteBuffer& buffer, int count)
+    bool wrap_bytes(ByteBuffer& buffer, size_t count)
     {
         if (m_size_remaining < count)
             return false;
@@ -177,14 +175,12 @@ public:
     bool at_end() const { return !m_size_remaining; }
 
 private:
-    const u8* m_original_data;
-    int m_original_size;
-    const u8* m_data_ptr;
-    int m_size_remaining;
+    const u8* m_data_ptr { nullptr };
+    size_t m_size_remaining { 0 };
 };
 
-static RefPtr<Gfx::Bitmap> load_png_impl(const u8*, int);
-static bool process_chunk(Streamer&, PNGLoadingContext& context, bool decode_size_only);
+static RefPtr<Gfx::Bitmap> load_png_impl(const u8*, size_t);
+static bool process_chunk(Streamer&, PNGLoadingContext& context);
 
 RefPtr<Gfx::Bitmap> load_png(const StringView& path)
 {
@@ -193,7 +189,7 @@ RefPtr<Gfx::Bitmap> load_png(const StringView& path)
         return nullptr;
     auto bitmap = load_png_impl((const u8*)mapped_file.data(), mapped_file.size());
     if (bitmap)
-        bitmap->set_mmap_name(String::format("Gfx::Bitmap [%dx%d] - Decoded PNG: %s", bitmap->width(), bitmap->height(), canonicalized_path(path).characters()));
+        bitmap->set_mmap_name(String::format("Gfx::Bitmap [%dx%d] - Decoded PNG: %s", bitmap->width(), bitmap->height(), LexicalPath::canonicalized_path(path).characters()));
     return bitmap;
 }
 
@@ -260,7 +256,7 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
     }
     if constexpr (filter_type == 2) {
         auto* pixels = (Pixel*)bitmap.scanline(y);
-        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (Pixel*)bitmap.scanline(y - 1);
+        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (const Pixel*)bitmap.scanline(y - 1);
         for (int i = 0; i < bitmap.width(); ++i) {
             auto& x = pixels[i];
             swap(x.r, x.b);
@@ -275,7 +271,7 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
     }
     if constexpr (filter_type == 3) {
         auto* pixels = (Pixel*)bitmap.scanline(y);
-        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (Pixel*)bitmap.scanline(y - 1);
+        auto* pixels_y_minus_1 = y == 0 ? dummy_scanline : (const Pixel*)bitmap.scanline(y - 1);
         for (int i = 0; i < bitmap.width(); ++i) {
             auto& x = pixels[i];
             swap(x.r, x.b);
@@ -313,42 +309,69 @@ ALWAYS_INLINE static void unfilter_impl(Gfx::Bitmap& bitmap, int y, const void* 
     }
 }
 
+template<typename T>
+ALWAYS_INLINE static void unpack_grayscale_without_alpha(PNGLoadingContext& context)
+{
+    for (int y = 0; y < context.height; ++y) {
+        auto* gray_values = reinterpret_cast<const T*>(context.scanlines[y].data.data());
+        for (int i = 0; i < context.width; ++i) {
+            auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+            pixel.r = gray_values[i];
+            pixel.g = gray_values[i];
+            pixel.b = gray_values[i];
+            pixel.a = 0xff;
+        }
+    }
+}
+
+template<typename T>
+ALWAYS_INLINE static void unpack_grayscale_with_alpha(PNGLoadingContext& context)
+{
+    for (int y = 0; y < context.height; ++y) {
+        auto* tuples = reinterpret_cast<const Tuple<T>*>(context.scanlines[y].data.data());
+        for (int i = 0; i < context.width; ++i) {
+            auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+            pixel.r = tuples[i].gray;
+            pixel.g = tuples[i].gray;
+            pixel.b = tuples[i].gray;
+            pixel.a = tuples[i].a;
+        }
+    }
+}
+
+template<typename T>
+ALWAYS_INLINE static void unpack_triplets_without_alpha(PNGLoadingContext& context)
+{
+    for (int y = 0; y < context.height; ++y) {
+        auto* triplets = reinterpret_cast<const Triplet<T>*>(context.scanlines[y].data.data());
+        for (int i = 0; i < context.width; ++i) {
+            auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+            pixel.r = triplets[i].r;
+            pixel.g = triplets[i].g;
+            pixel.b = triplets[i].b;
+            pixel.a = 0xff;
+        }
+    }
+}
+
 NEVER_INLINE FLATTEN static void unfilter(PNGLoadingContext& context)
 {
     // First unpack the scanlines to RGBA:
     switch (context.color_type) {
     case 0:
         if (context.bit_depth == 8) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* gray_values = (u8*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = gray_values[i];
-                    pixel.g = gray_values[i];
-                    pixel.b = gray_values[i];
-                    pixel.a = 0xff;
-                }
-            }
+            unpack_grayscale_without_alpha<u8>(context);
         } else if (context.bit_depth == 16) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* gray_values = (u16*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = gray_values[i] & 0xFF;
-                    pixel.g = gray_values[i] & 0xFF;
-                    pixel.b = gray_values[i] & 0xFF;
-                    pixel.a = 0xff;
-                }
-            }
+            unpack_grayscale_without_alpha<u16>(context);
         } else if (context.bit_depth == 1 || context.bit_depth == 2 || context.bit_depth == 4) {
             auto pixels_per_byte = 8 / context.bit_depth;
             auto mask = (1 << context.bit_depth) - 1;
             for (int y = 0; y < context.height; ++y) {
                 auto* gray_values = (u8*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto bit_offset = (8 - context.bit_depth) - (context.bit_depth * (i % pixels_per_byte));
-                    auto value = (gray_values[i / pixels_per_byte] >> bit_offset) & mask;
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
+                for (int x = 0; x < context.width; ++x) {
+                    auto bit_offset = (8 - context.bit_depth) - (context.bit_depth * (x % pixels_per_byte));
+                    auto value = (gray_values[x / pixels_per_byte] >> bit_offset) & mask;
+                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[x];
                     pixel.r = value * (0xff / pow(context.bit_depth, 2));
                     pixel.g = value * (0xff / pow(context.bit_depth, 2));
                     pixel.b = value * (0xff / pow(context.bit_depth, 2));
@@ -361,54 +384,18 @@ NEVER_INLINE FLATTEN static void unfilter(PNGLoadingContext& context)
         break;
     case 4:
         if (context.bit_depth == 8) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* tuples = (Tuple*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = tuples[i].gray;
-                    pixel.g = tuples[i].gray;
-                    pixel.b = tuples[i].gray;
-                    pixel.a = tuples[i].a;
-                }
-            }
+            unpack_grayscale_with_alpha<u8>(context);
         } else if (context.bit_depth == 16) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* tuples = (Tuple16*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = tuples[i].gray & 0xFF;
-                    pixel.g = tuples[i].gray & 0xFF;
-                    pixel.b = tuples[i].gray & 0xFF;
-                    pixel.a = tuples[i].a & 0xFF;
-                }
-            }
+            unpack_grayscale_with_alpha<u16>(context);
         } else {
             ASSERT_NOT_REACHED();
         }
         break;
     case 2:
         if (context.bit_depth == 8) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* triplets = (Triplet*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = triplets[i].r;
-                    pixel.g = triplets[i].g;
-                    pixel.b = triplets[i].b;
-                    pixel.a = 0xff;
-                }
-            }
+            unpack_triplets_without_alpha<u8>(context);
         } else if (context.bit_depth == 16) {
-            for (int y = 0; y < context.height; ++y) {
-                auto* triplets = (Triplet16*)context.scanlines[y].data.data();
-                for (int i = 0; i < context.width; ++i) {
-                    auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
-                    pixel.r = triplets[i].r & 0xFF;
-                    pixel.g = triplets[i].g & 0xFF;
-                    pixel.b = triplets[i].b & 0xFF;
-                    pixel.a = 0xff;
-                }
-            }
+            unpack_triplets_without_alpha<u16>(context);
         } else {
             ASSERT_NOT_REACHED();
         }
@@ -420,7 +407,7 @@ NEVER_INLINE FLATTEN static void unfilter(PNGLoadingContext& context)
             }
         } else if (context.bit_depth == 16) {
             for (int y = 0; y < context.height; ++y) {
-                auto* triplets = (Quad16*)context.scanlines[y].data.data();
+                auto* triplets = reinterpret_cast<const Quad<u16>*>(context.scanlines[y].data.data());
                 for (int i = 0; i < context.width; ++i) {
                     auto& pixel = (Pixel&)context.bitmap->scanline(y)[i];
                     pixel.r = triplets[i].r & 0xFF;
@@ -525,13 +512,17 @@ static bool decode_png_header(PNGLoadingContext& context)
         return true;
 
     if (!context.data || context.data_size < sizeof(png_header)) {
+#ifdef PNG_DEBUG
         dbg() << "Missing PNG header";
+#endif
         context.state = PNGLoadingContext::State::Error;
         return false;
     }
 
     if (memcmp(context.data, png_header, sizeof(png_header)) != 0) {
+#ifdef PNG_DEBUG
         dbg() << "Invalid PNG header";
+#endif
         context.state = PNGLoadingContext::State::Error;
         return false;
     }
@@ -555,7 +546,7 @@ static bool decode_png_size(PNGLoadingContext& context)
 
     Streamer streamer(data_ptr, data_remaining);
     while (!streamer.at_end()) {
-        if (!process_chunk(streamer, context, true)) {
+        if (!process_chunk(streamer, context)) {
             context.state = PNGLoadingContext::State::Error;
             return false;
         }
@@ -585,7 +576,7 @@ static bool decode_png_chunks(PNGLoadingContext& context)
 
     Streamer streamer(data_ptr, data_remaining);
     while (!streamer.at_end()) {
-        if (!process_chunk(streamer, context, false)) {
+        if (!process_chunk(streamer, context)) {
             context.state = PNGLoadingContext::State::Error;
             return false;
         }
@@ -595,30 +586,19 @@ static bool decode_png_chunks(PNGLoadingContext& context)
     return true;
 }
 
-static bool decode_png_bitmap(PNGLoadingContext& context)
+static bool decode_png_bitmap_simple(PNGLoadingContext& context)
 {
-    if (context.state < PNGLoadingContext::State::ChunksDecoded) {
-        if (!decode_png_chunks(context))
-            return false;
-    }
-
-    if (context.state >= PNGLoadingContext::State::BitmapDecoded)
-        return true;
-
-    unsigned long srclen = context.compressed_data.size() - 6;
-    unsigned long destlen = context.decompression_buffer_size;
-    int ret = puff(context.decompression_buffer, &destlen, context.compressed_data.data() + 2, &srclen);
-    if (ret < 0) {
-        context.state = PNGLoadingContext::State::Error;
-        return false;
-    }
-    context.compressed_data.clear();
-
-    context.scanlines.ensure_capacity(context.height);
     Streamer streamer(context.decompression_buffer, context.decompression_buffer_size);
+
     for (int y = 0; y < context.height; ++y) {
         u8 filter;
         if (!streamer.read(filter)) {
+            context.state = PNGLoadingContext::State::Error;
+            return false;
+        }
+
+        if (filter > 4) {
+            dbg() << "Invalid PNG filter: " << filter;
             context.state = PNGLoadingContext::State::Error;
             return false;
         }
@@ -636,6 +616,167 @@ static bool decode_png_bitmap(PNGLoadingContext& context)
 
     unfilter(context);
 
+    return true;
+}
+
+static int adam7_height(PNGLoadingContext& context, int pass)
+{
+    switch (pass) {
+    case 1:
+        return (context.height + 7) / 8;
+    case 2:
+        return (context.height + 7) / 8;
+    case 3:
+        return (context.height + 3) / 8;
+    case 4:
+        return (context.height + 3) / 4;
+    case 5:
+        return (context.height + 1) / 4;
+    case 6:
+        return (context.height + 1) / 2;
+    case 7:
+        return context.height / 2;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+}
+
+static int adam7_width(PNGLoadingContext& context, int pass)
+{
+    switch (pass) {
+    case 1:
+        return (context.width + 7) / 8;
+    case 2:
+        return (context.width + 3) / 8;
+    case 3:
+        return (context.width + 3) / 4;
+    case 4:
+        return (context.width + 1) / 4;
+    case 5:
+        return (context.width + 1) / 2;
+    case 6:
+        return context.width / 2;
+    case 7:
+        return context.width;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+}
+
+// Index 0 unused (non-interlaced case)
+static int adam7_starty[8] = { 0, 0, 0, 4, 0, 2, 0, 1 };
+static int adam7_startx[8] = { 0, 0, 4, 0, 2, 0, 1, 0 };
+static int adam7_stepy[8] = { 1, 8, 8, 8, 4, 4, 2, 2 };
+static int adam7_stepx[8] = { 1, 8, 8, 4, 4, 2, 2, 1 };
+
+static bool decode_adam7_pass(PNGLoadingContext& context, Streamer& streamer, int pass)
+{
+    PNGLoadingContext subimage_context;
+    subimage_context.width = adam7_width(context, pass);
+    subimage_context.height = adam7_height(context, pass);
+    subimage_context.channels = context.channels;
+    subimage_context.color_type = context.color_type;
+    subimage_context.palette_data = context.palette_data;
+    subimage_context.palette_transparency_data = context.palette_transparency_data;
+    subimage_context.bit_depth = context.bit_depth;
+    subimage_context.filter_method = context.filter_method;
+
+    // For small images, some passes might be empty
+    if (!subimage_context.width || !subimage_context.height)
+        return true;
+
+    subimage_context.scanlines.clear_with_capacity();
+    for (int y = 0; y < subimage_context.height; ++y) {
+        u8 filter;
+        if (!streamer.read(filter)) {
+            context.state = PNGLoadingContext::State::Error;
+            return false;
+        }
+
+        if (filter > 4) {
+            dbg() << "Invalid PNG filter: " << filter;
+            context.state = PNGLoadingContext::State::Error;
+            return false;
+        }
+
+        subimage_context.scanlines.append({ filter });
+        auto& scanline_buffer = subimage_context.scanlines.last().data;
+        auto row_size = ((subimage_context.width * context.channels * context.bit_depth) + 7) / 8;
+        if (!streamer.wrap_bytes(scanline_buffer, row_size)) {
+            context.state = PNGLoadingContext::State::Error;
+            return false;
+        }
+    }
+
+    subimage_context.bitmap = Bitmap::create(context.bitmap->format(), { subimage_context.width, subimage_context.height });
+    unfilter(subimage_context);
+
+    // Copy the subimage data into the main image according to the pass pattern
+    for (int y = 0, dy = adam7_starty[pass]; y < subimage_context.height && dy < context.height; ++y, dy += adam7_stepy[pass]) {
+        for (int x = 0, dx = adam7_startx[pass]; x < subimage_context.width && dy < context.width; ++x, dx += adam7_stepx[pass]) {
+            context.bitmap->set_pixel(dx, dy, subimage_context.bitmap->get_pixel(x, y));
+        }
+    }
+    return true;
+}
+
+static bool decode_png_adam7(PNGLoadingContext& context)
+{
+    Streamer streamer(context.decompression_buffer, context.decompression_buffer_size);
+    context.bitmap = Bitmap::create_purgeable(context.has_alpha() ? BitmapFormat::RGBA32 : BitmapFormat::RGB32, { context.width, context.height });
+
+    for (int pass = 1; pass <= 7; ++pass) {
+        if (!decode_adam7_pass(context, streamer, pass))
+            return false;
+    }
+    return true;
+}
+
+static bool decode_png_bitmap(PNGLoadingContext& context)
+{
+    if (context.state < PNGLoadingContext::State::ChunksDecoded) {
+        if (!decode_png_chunks(context))
+            return false;
+    }
+
+    if (context.state >= PNGLoadingContext::State::BitmapDecoded)
+        return true;
+
+    unsigned long srclen = context.compressed_data.size() - 6;
+    unsigned long destlen = 0;
+    int ret = puff(NULL, &destlen, context.compressed_data.data() + 2, &srclen);
+    if (ret != 0) {
+        context.state = PNGLoadingContext::State::Error;
+        return false;
+    }
+    context.decompression_buffer_size = destlen;
+#ifdef __serenity__
+    context.decompression_buffer = (u8*)mmap_with_name(nullptr, context.decompression_buffer_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0, "PNG decompression buffer");
+#else
+    context.decompression_buffer = (u8*)mmap(nullptr, context.decompression_buffer_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+#endif
+
+    ret = puff(context.decompression_buffer, &destlen, context.compressed_data.data() + 2, &srclen);
+    if (ret != 0) {
+        context.state = PNGLoadingContext::State::Error;
+        return false;
+    }
+    context.compressed_data.clear();
+
+    context.scanlines.ensure_capacity(context.height);
+    switch (context.interlace_method) {
+    case PngInterlaceMethod::Null:
+        if (!decode_png_bitmap_simple(context))
+            return false;
+        break;
+    case PngInterlaceMethod::Adam7:
+        if (!decode_png_adam7(context))
+            return false;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+    }
+
     munmap(context.decompression_buffer, context.decompression_buffer_size);
     context.decompression_buffer = nullptr;
     context.decompression_buffer_size = 0;
@@ -644,7 +785,7 @@ static bool decode_png_bitmap(PNGLoadingContext& context)
     return true;
 }
 
-static RefPtr<Gfx::Bitmap> load_png_impl(const u8* data, int data_size)
+static RefPtr<Gfx::Bitmap> load_png_impl(const u8* data, size_t data_size)
 {
     PNGLoadingContext context;
     context.data = data;
@@ -659,7 +800,7 @@ static RefPtr<Gfx::Bitmap> load_png_impl(const u8* data, int data_size)
     return context.bitmap;
 }
 
-static bool process_IHDR(const ByteBuffer& data, PNGLoadingContext& context, bool decode_size_only = false)
+static bool process_IHDR(const ByteBuffer& data, PNGLoadingContext& context)
 {
     if (data.size() < (int)sizeof(PNG_IHDR))
         return false;
@@ -680,9 +821,8 @@ static bool process_IHDR(const ByteBuffer& data, PNGLoadingContext& context, boo
     printf(" Interlace type: %d\n", context.interlace_method);
 #endif
 
-    // FIXME: Implement Adam7 deinterlacing
-    if (context.interlace_method != 0) {
-        dbgprintf("PNGLoader::process_IHDR: Interlaced PNGs not currently supported.\n");
+    if (context.interlace_method != PngInterlaceMethod::Null && context.interlace_method != PngInterlaceMethod::Adam7) {
+        dbgprintf("PNGLoader::process_IHDR: unknown interlace method: %d\n", context.interlace_method);
         return false;
     }
 
@@ -704,13 +844,6 @@ static bool process_IHDR(const ByteBuffer& data, PNGLoadingContext& context, boo
         break;
     default:
         ASSERT_NOT_REACHED();
-    }
-
-    if (!decode_size_only) {
-        // Calculate number of bytes per row (+1 for filter)
-        auto row_size = ((context.width * context.channels * context.bit_depth) + 7) / 8 + 1;
-        context.decompression_buffer_size = row_size * context.height;
-        context.decompression_buffer = (u8*)mmap_with_name(nullptr, context.decompression_buffer_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0, "PNG decompression buffer");
     }
     return true;
 }
@@ -737,7 +870,7 @@ static bool process_tRNS(const ByteBuffer& data, PNGLoadingContext& context)
     return true;
 }
 
-static bool process_chunk(Streamer& streamer, PNGLoadingContext& context, bool decode_size_only)
+static bool process_chunk(Streamer& streamer, PNGLoadingContext& context)
 {
     u32 chunk_size;
     if (!streamer.read(chunk_size)) {
@@ -765,7 +898,7 @@ static bool process_chunk(Streamer& streamer, PNGLoadingContext& context, bool d
 #endif
 
     if (!strcmp((const char*)chunk_type, "IHDR"))
-        return process_IHDR(chunk_data, context, decode_size_only);
+        return process_IHDR(chunk_data, context);
     if (!strcmp((const char*)chunk_type, "IDAT"))
         return process_IDAT(chunk_data, context);
     if (!strcmp((const char*)chunk_type, "PLTE"))
@@ -786,7 +919,7 @@ PNGImageDecoderPlugin::~PNGImageDecoderPlugin()
 {
 }
 
-Size PNGImageDecoderPlugin::size()
+IntSize PNGImageDecoderPlugin::size()
 {
     if (m_context->state == PNGLoadingContext::State::Error)
         return {};

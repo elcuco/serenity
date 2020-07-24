@@ -32,10 +32,10 @@ namespace Web {
 
 class LayoutListItemMarker final : public LayoutBox {
 public:
-    LayoutListItemMarker();
+    explicit LayoutListItemMarker(Document&);
     virtual ~LayoutListItemMarker() override;
 
-    virtual void render(RenderingContext&) override;
+    virtual void paint(PaintContext&, PaintPhase) override;
 
 private:
     virtual const char* class_name() const override { return "LayoutListItemMarker"; }

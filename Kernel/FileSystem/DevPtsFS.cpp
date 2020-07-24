@@ -75,19 +75,9 @@ static unsigned pty_index_to_inode_index(unsigned pty_index)
     return pty_index + 2;
 }
 
-InodeIdentifier DevPtsFS::root_inode() const
+NonnullRefPtr<Inode> DevPtsFS::root_inode() const
 {
-    return { fsid(), 1 };
-}
-
-KResultOr<NonnullRefPtr<Inode>> DevPtsFS::create_inode(InodeIdentifier, const String&, mode_t, off_t, dev_t, uid_t, gid_t)
-{
-    return KResult(-EROFS);
-}
-
-KResult DevPtsFS::create_directory(InodeIdentifier, const String&, mode_t, uid_t, gid_t)
-{
-    return KResult(-EROFS);
+    return *m_root_inode;
 }
 
 RefPtr<Inode> DevPtsFS::get_inode(InodeIdentifier inode_id) const
@@ -146,10 +136,10 @@ InodeMetadata DevPtsFSInode::metadata() const
     return m_metadata;
 }
 
-bool DevPtsFSInode::traverse_as_directory(Function<bool(const FS::DirectoryEntry&)> callback) const
+KResult DevPtsFSInode::traverse_as_directory(Function<bool(const FS::DirectoryEntry&)> callback) const
 {
     if (identifier().index() > 1)
-        return false;
+        return KResult(-ENOTDIR);
 
     callback({ ".", 1, identifier(), 0 });
     callback({ "..", 2, identifier(), 0 });
@@ -160,7 +150,7 @@ bool DevPtsFSInode::traverse_as_directory(Function<bool(const FS::DirectoryEntry
         callback({ name.characters(), name.length(), identifier, 0 });
     }
 
-    return true;
+    return KSuccess;
 }
 
 size_t DevPtsFSInode::directory_entry_count() const
@@ -175,12 +165,13 @@ RefPtr<Inode> DevPtsFSInode::lookup(StringView name)
     ASSERT(identifier().index() == 1);
 
     if (name == "." || name == "..")
-        return fs().get_inode(identifier());
+        return this;
 
-    bool ok;
-    unsigned pty_index = name.to_uint(ok);
-    if (ok && ptys->contains(pty_index)) {
-        return fs().get_inode({ fsid(), pty_index_to_inode_index(pty_index) });
+    auto& fs = static_cast<DevPtsFS&>(this->fs());
+
+    auto pty_index = name.to_uint();
+    if (pty_index.has_value() && ptys->contains(pty_index.value())) {
+        return fs.get_inode({ fsid(), pty_index_to_inode_index(pty_index.value()) });
     }
 
     return {};
@@ -190,7 +181,12 @@ void DevPtsFSInode::flush_metadata()
 {
 }
 
-KResult DevPtsFSInode::add_child(InodeIdentifier, const StringView&, mode_t)
+KResult DevPtsFSInode::add_child(Inode&, const StringView&, mode_t)
+{
+    return KResult(-EROFS);
+}
+
+KResultOr<NonnullRefPtr<Inode>> DevPtsFSInode::create_child(const String&, mode_t, dev_t, uid_t, gid_t)
 {
     return KResult(-EROFS);
 }

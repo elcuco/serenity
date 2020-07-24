@@ -31,8 +31,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #ifndef SOCK_NONBLOCK
-#include <sys/ioctl.h>
+#    include <sys/ioctl.h>
 #endif
 
 namespace Core {
@@ -54,8 +55,6 @@ bool LocalServer::take_over_from_system_server()
     constexpr auto socket_takeover = "SOCKET_TAKEOVER";
 
     if (getenv(socket_takeover)) {
-        dbg() << "Taking the socket over from SystemServer";
-
         // Sanity check: it has to be a socket.
         struct stat stat;
         int rc = fstat(3, &stat);
@@ -111,25 +110,26 @@ bool LocalServer::listen(const String& address)
     fcntl(m_fd, F_SETFD, FD_CLOEXEC);
 #endif
     ASSERT(m_fd >= 0);
-
+#ifndef __APPLE__
     rc = fchmod(m_fd, 0600);
     if (rc < 0) {
         perror("fchmod");
         ASSERT_NOT_REACHED();
     }
+#endif
 
     auto socket_address = SocketAddress::local(address);
     auto un = socket_address.to_sockaddr_un();
     rc = ::bind(m_fd, (const sockaddr*)&un, sizeof(un));
     if (rc < 0) {
         perror("bind");
-        ASSERT_NOT_REACHED();
+        return false;
     }
 
     rc = ::listen(m_fd, 5);
     if (rc < 0) {
         perror("listen");
-        ASSERT_NOT_REACHED();
+        return false;
     }
 
     m_listening = true;

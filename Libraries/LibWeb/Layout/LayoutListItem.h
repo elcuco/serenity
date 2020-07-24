@@ -35,10 +35,10 @@ class LayoutListItemMarker;
 
 class LayoutListItem final : public LayoutBlock {
 public:
-    LayoutListItem(const Element&, NonnullRefPtr<StyleProperties>);
+    LayoutListItem(Document&, const Element&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutListItem() override;
 
-    virtual void layout() override;
+    virtual void layout(LayoutMode = LayoutMode::Default) override;
 
 private:
     virtual const char* class_name() const override { return "LayoutListItem"; }

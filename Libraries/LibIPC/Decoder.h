@@ -27,14 +27,17 @@
 #pragma once
 
 #include <AK/Forward.h>
+#include <AK/NumericLimits.h>
+#include <AK/String.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
 
 namespace IPC {
 
 template<typename T>
-bool decode(BufferStream&, T&)
+inline bool decode(Decoder&, T&)
 {
+    ASSERT_NOT_REACHED();
     return false;
 }
 
@@ -56,12 +59,45 @@ public:
     bool decode(i64&);
     bool decode(float&);
     bool decode(String&);
+    bool decode(URL&);
     bool decode(Dictionary&);
 
     template<typename T>
     bool decode(T& value)
     {
         return IPC::decode(*this, value);
+    }
+
+    template<typename T>
+    bool decode(Vector<T>& vector)
+    {
+        u64 size;
+        if (!decode(size) || size > NumericLimits<i32>::max())
+            return false;
+        for (size_t i = 0; i < size; ++i) {
+            T value;
+            if (!decode(value))
+                return false;
+            vector.append(move(value));
+        }
+        return true;
+    }
+
+    template<typename T>
+    bool decode(Optional<T>& optional)
+    {
+        bool has_value;
+        if (!decode(has_value))
+            return false;
+        if (!has_value) {
+            optional = {};
+            return true;
+        }
+        T value;
+        if (!decode(value))
+            return false;
+        optional = move(value);
+        return true;
     }
 
 private:

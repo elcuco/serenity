@@ -31,10 +31,11 @@
 #include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/Frame.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Palette.h>
+#include <spawn.h>
 #include <stdio.h>
 
 enum class GraphType {
@@ -42,17 +43,17 @@ enum class GraphType {
     Memory,
 };
 
-class GraphWidget final : public GUI::Widget {
-    C_OBJECT(GraphWidget)
+class GraphWidget final : public GUI::Frame {
+    C_OBJECT(GraphWidget);
+
 public:
     GraphWidget(GraphType graph_type, Optional<Gfx::Color> graph_color)
         : m_graph_type(graph_type)
     {
+        set_frame_thickness(1);
         m_graph_color = graph_color.value_or(palette().menu_selection());
         start_timer(1000);
     }
-
-    virtual ~GraphWidget() override {}
 
 private:
     virtual void timer_event(Core::TimerEvent&) override
@@ -86,14 +87,17 @@ private:
 
     virtual void paint_event(GUI::PaintEvent& event) override
     {
+        GUI::Frame::paint_event(event);
         GUI::Painter painter(*this);
         painter.add_clip_rect(event.rect());
+        painter.add_clip_rect(frame_inner_rect());
         painter.fill_rect(event.rect(), Color::Black);
         int i = m_history.capacity() - m_history.size();
+        auto rect = frame_inner_rect();
         for (auto value : m_history) {
             painter.draw_line(
-                { i, rect().bottom() },
-                { i, (int)(height() - (value * (float)height())) },
+                { i, rect.bottom() },
+                { i, (int)(rect.height() - (value * (float)rect.height())) },
                 m_graph_color);
             ++i;
         }
@@ -103,14 +107,10 @@ private:
     {
         if (event.button() != GUI::MouseButton::Left)
             return;
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-        } else if (pid == 0) {
-            execl("/bin/SystemMonitor", "SystemMonitor", nullptr);
-            perror("execl");
-            ASSERT_NOT_REACHED();
-        }
+        pid_t child_pid;
+        const char* argv[] = { "SystemMonitor", nullptr };
+        if ((errno = posix_spawn(&child_pid, "/bin/SystemMonitor", nullptr, nullptr, const_cast<char**>(argv), environ)))
+            perror("posix_spawn");
     }
 
     static void get_cpu_usage(unsigned& busy, unsigned& idle)
@@ -137,9 +137,10 @@ private:
             ASSERT_NOT_REACHED();
 
         auto file_contents = proc_memstat->read_all();
-        auto json = JsonValue::from_string(file_contents).as_object();
-        unsigned user_physical_allocated = json.get("user_physical_allocated").to_u32();
-        unsigned user_physical_available = json.get("user_physical_available").to_u32();
+        auto json = JsonValue::from_string(file_contents);
+        ASSERT(json.has_value());
+        unsigned user_physical_allocated = json.value().as_object().get("user_physical_allocated").to_u32();
+        unsigned user_physical_available = json.value().as_object().get("user_physical_available").to_u32();
         allocated = (user_physical_allocated * 4096) / 1024;
         available = (user_physical_available * 4096) / 1024;
     }
@@ -158,7 +159,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer accept proc exec rpath", nullptr) < 0) {
         perror("pledge");
@@ -234,5 +235,5 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
-    return app.exec();
+    return app->exec();
 }

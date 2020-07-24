@@ -211,9 +211,9 @@ double log10(double x)
 double log(double x)
 {
     if (x < 0)
-        return __builtin_nan("");
+        return NAN;
     if (x == 0)
-        return -__builtin_huge_val();
+        return -INFINITY;
     double y = 1 + 2 * (x - 1) / (x + 1);
     double exponentiated = exp(y);
     y = y + 2 * (x - exponentiated) / (x + exponentiated);
@@ -257,7 +257,7 @@ double exp(double exponent)
             if (integer_part & 32)
                 result *= e_to_power<32>();
             if (integer_part >= 64)
-                return __builtin_huge_val();
+                return INFINITY;
         }
         exponent -= integer_part;
     } else if (exponent < 0)
@@ -277,6 +277,16 @@ double exp(double exponent)
 float expf(float exponent)
 {
     return (float)exp(exponent);
+}
+
+double exp2(double exponent)
+{
+    return pow(2.0, exponent);
+}
+
+float exp2f(float exponent)
+{
+    return pow(2.0f, exponent);
 }
 
 double cosh(double x)
@@ -321,7 +331,7 @@ double atan(double x)
 double asin(double x)
 {
     if (x > 1 || x < -1)
-        return __builtin_nan("");
+        return NAN;
     if (x > 0.5 || x < -0.5)
         return 2 * atan(x / (1 + sqrt(1 - x * x)));
     double squared = x * x;
@@ -410,9 +420,20 @@ float roundf(float value)
     return (float)(int)(value - 0.5f);
 }
 
+float floorf(float value)
+{
+    if (value >= 0)
+        return (int)value;
+    int intvalue = (int)value;
+    return ((float)intvalue == value) ? intvalue : intvalue - 1;
+}
+
 double floor(double value)
 {
-    return (int)value;
+    if (value >= 0)
+        return (int)value;
+    int intvalue = (int)value;
+    return ((double)intvalue == value) ? intvalue : intvalue - 1;
 }
 
 double rint(double value)
@@ -452,5 +473,74 @@ double modf(double x, double* intpart)
 {
     *intpart = (double)((int)(x));
     return x - (int)x;
+}
+
+double gamma(double x)
+{
+    // Stirling approximation
+    return sqrt(2.0 * M_PI / x) * pow(x / M_E, x);
+}
+
+double expm1(double x)
+{
+    return pow(M_E, x) - 1;
+}
+
+double cbrt(double x)
+{
+    if (x > 0) {
+        return pow(x, 1.0 / 3.0);
+    }
+
+    return -pow(-x, 1.0 / 3.0);
+}
+
+double log1p(double x)
+{
+    return log(1 + x);
+}
+
+double acosh(double x)
+{
+    return log(x + sqrt(x * x - 1));
+}
+
+double asinh(double x)
+{
+    return log(x + sqrt(x * x + 1));
+}
+
+double atanh(double x)
+{
+    return log((1 + x) / (1 - x)) / 2.0;
+}
+
+double hypot(double x, double y)
+{
+    return sqrt(x * x + y * y);
+}
+
+double erf(double x)
+{
+    // algorithm taken from Abramowitz and Stegun (no. 26.2.17)
+    double t = 1 / (1 + 0.47047 * abs(x));
+    double poly = t * (0.3480242 + t * (-0.958798 + t * 0.7478556));
+    double answer = 1 - poly * exp(-x * x);
+    if (x < 0)
+        return -answer;
+
+    return answer;
+}
+
+double erfc(double x)
+{
+    return 1 - erf(x);
+}
+
+int isnormal(double x)
+{
+    if (x < 0)
+        x = -x;
+    return x >= DOUBLE_MIN && x <= DOUBLE_MAX;
 }
 }

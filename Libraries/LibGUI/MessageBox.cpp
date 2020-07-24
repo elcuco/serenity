@@ -27,23 +27,27 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Label.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGfx/Font.h>
 #include <stdio.h>
 
 namespace GUI {
 
-int MessageBox::show(const StringView& text, const StringView& title, Type type, InputType input_type, Window* parent_window)
+int MessageBox::show(Window* parent_window, const StringView& text, const StringView& title, Type type, InputType input_type)
 {
-    auto box = MessageBox::construct(text, title, type, input_type);
-    if (parent_window) {
-        parent_window->add_child(box);
+    auto box = MessageBox::construct(parent_window, text, title, type, input_type);
+    if (parent_window)
         box->set_icon(parent_window->icon());
-    }
     return box->exec();
 }
 
-MessageBox::MessageBox(const StringView& text, const StringView& title, Type type, InputType input_type, Window* parent_window)
+int MessageBox::show_error(Window* parent_window, const StringView& text)
+{
+    return show(parent_window, text, "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK);
+}
+
+MessageBox::MessageBox(Window* parent_window, const StringView& text, const StringView& title, Type type, InputType input_type)
     : Dialog(parent_window)
     , m_text(text)
     , m_type(type)
@@ -66,6 +70,8 @@ RefPtr<Gfx::Bitmap> MessageBox::icon() const
         return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-warning.png");
     case Type::Error:
         return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-error.png");
+    case Type::Question:
+        return Gfx::Bitmap::load_from_file("/res/icons/32x32/msgbox-question.png");
     default:
         return nullptr;
     }
@@ -110,11 +116,10 @@ void MessageBox::build()
     message_container.layout()->set_spacing(8);
 
     if (m_type != Type::None) {
-        auto& icon_label = message_container.add<Label>();
-        icon_label.set_size_policy(SizePolicy::Fixed, SizePolicy::Fixed);
-        icon_label.set_preferred_size(32, 32);
-        icon_label.set_icon(icon());
-        icon_width = icon_label.icon()->width();
+        auto& icon_image = message_container.add<ImageWidget>();
+        icon_image.set_bitmap(icon());
+        if (icon())
+            icon_width = icon()->width();
     }
 
     auto& label = message_container.add<Label>(m_text);
@@ -134,7 +139,7 @@ void MessageBox::build()
         button.set_size_policy(SizePolicy::Fixed, SizePolicy::Fill);
         button.set_preferred_size(96, 0);
         button.set_text(label);
-        button.on_click = [this, label, result] {
+        button.on_click = [this, label, result](auto) {
             done(result);
         };
     };

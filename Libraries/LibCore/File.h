@@ -46,6 +46,8 @@ public:
     static bool is_directory(const String& filename);
 
     static bool exists(const String& filename);
+    static String real_path_for(const String& filename);
+    static String read_link(const StringView& link_path);
 
     virtual bool open(IODevice::OpenMode) override;
 

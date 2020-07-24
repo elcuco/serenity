@@ -25,6 +25,7 @@
  */
 
 #include "PropertiesDialog.h"
+#include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/CheckBox.h>
@@ -42,8 +43,8 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
     : Dialog(parent_window)
     , m_model(model)
 {
-    auto file_path = FileSystemPath(path);
-    ASSERT(file_path.is_valid());
+    auto lexical_path = LexicalPath(path);
+    ASSERT(lexical_path.is_valid());
 
     auto& main_widget = set_main_widget<GUI::Widget>();
     main_widget.set_layout<GUI::VerticalBoxLayout>();
@@ -68,21 +69,21 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
     file_container.layout()->set_spacing(20);
     file_container.set_preferred_size(0, 34);
 
-    m_icon = file_container.add<GUI::Label>();
+    m_icon = file_container.add<GUI::ImageWidget>();
     m_icon->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_icon->set_preferred_size(32, 32);
 
-    m_name = file_path.basename();
-    m_path = file_path.string();
+    m_name = lexical_path.basename();
+    m_path = lexical_path.string();
 
     m_name_box = file_container.add<GUI::TextBox>();
     m_name_box->set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     m_name_box->set_preferred_size({ 0, 22 });
     m_name_box->set_text(m_name);
-    m_name_box->set_enabled(!disable_rename);
+    m_name_box->set_mode(disable_rename ? GUI::TextBox::Mode::DisplayOnly : GUI::TextBox::Mode::Editable);
     m_name_box->on_change = [&]() {
         m_name_dirty = m_name != m_name_box->text();
-        m_apply_button->set_enabled(true);
+        m_apply_button->set_enabled(m_name_dirty || m_permissions_dirty);
     };
 
     set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/properties.png"));
@@ -110,18 +111,18 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
     }
 
     m_mode = st.st_mode;
+    m_old_mode = st.st_mode;
 
     auto properties = Vector<PropertyValuePair>();
     properties.append({ "Type:", get_description(m_mode) });
     properties.append({ "Location:", path });
 
     if (S_ISLNK(m_mode)) {
-        char link_destination[PATH_MAX];
-        ssize_t len = readlink(path.characters(), link_destination, sizeof(link_destination));
-        if (len < 0) {
+        auto link_destination = Core::File::read_link(path);
+        if (link_destination.is_null()) {
             perror("readlink");
         } else {
-            properties.append({ "Link target:", String(link_destination, len) });
+            properties.append({ "Link target:", link_destination });
         }
     }
 
@@ -149,26 +150,27 @@ PropertiesDialog::PropertiesDialog(GUI::FileSystemModel& model, String path, boo
 
     button_widget.layout()->add_spacer();
 
-    make_button("OK", button_widget).on_click = [this] {
+    make_button("OK", button_widget).on_click = [this](auto) {
         if (apply_changes())
             close();
     };
-    make_button("Cancel", button_widget).on_click = [this] {
+    make_button("Cancel", button_widget).on_click = [this](auto) {
         close();
     };
 
     m_apply_button = make_button("Apply", button_widget);
-    m_apply_button->on_click = [this] { apply_changes(); };
+    m_apply_button->on_click = [this](auto) { apply_changes(); };
     m_apply_button->set_enabled(false);
 
     update();
 }
 
-PropertiesDialog::~PropertiesDialog() {}
+PropertiesDialog::~PropertiesDialog() { }
 
 void PropertiesDialog::update()
 {
-    m_icon->set_icon(const_cast<Gfx::Bitmap*>(m_model.icon_for_file(m_mode, m_name).bitmap_for_size(32)));
+    auto bitmap = m_model.icon_for_file(m_mode, m_name).bitmap_for_size(32);
+    m_icon->set_bitmap(bitmap);
     set_title(String::format("%s - Properties", m_name.characters()));
 }
 
@@ -180,8 +182,8 @@ void PropertiesDialog::permission_changed(mode_t mask, bool set)
         m_mode &= ~mask;
     }
 
-    m_permissions_dirty = true;
-    m_apply_button->set_enabled(true);
+    m_permissions_dirty = m_mode != m_old_mode;
+    m_apply_button->set_enabled(m_name_dirty || m_permissions_dirty);
 }
 
 String PropertiesDialog::make_full_path(String name)
@@ -196,12 +198,12 @@ bool PropertiesDialog::apply_changes()
         String new_file = make_full_path(new_name).characters();
 
         if (GUI::FilePicker::file_exists(new_file)) {
-            GUI::MessageBox::show(String::format("A file \"%s\" already exists!", new_name.characters()), "Error", GUI::MessageBox::Type::Error);
+            GUI::MessageBox::show(this, String::format("A file \"%s\" already exists!", new_name.characters()), "Error", GUI::MessageBox::Type::Error);
             return false;
         }
 
         if (rename(make_full_path(m_name).characters(), new_file.characters())) {
-            GUI::MessageBox::show(String::format("Could not rename file: %s!", strerror(errno)), "Error", GUI::MessageBox::Type::Error);
+            GUI::MessageBox::show(this, String::format("Could not rename file: %s!", strerror(errno)), "Error", GUI::MessageBox::Type::Error);
             return false;
         }
 
@@ -212,10 +214,11 @@ bool PropertiesDialog::apply_changes()
 
     if (m_permissions_dirty) {
         if (chmod(make_full_path(m_name).characters(), m_mode)) {
-            GUI::MessageBox::show(String::format("Could not update permissions: %s!", strerror(errno)), "Error", GUI::MessageBox::Type::Error);
+            GUI::MessageBox::show(this, String::format("Could not update permissions: %s!", strerror(errno)), "Error", GUI::MessageBox::Type::Error);
             return false;
         }
 
+        m_old_mode = m_mode;
         m_permissions_dirty = false;
     }
 

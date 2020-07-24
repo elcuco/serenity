@@ -55,6 +55,11 @@ void StyleProperties::set_property(CSS::PropertyID id, NonnullRefPtr<StyleValue>
     m_property_values.set((unsigned)id, move(value));
 }
 
+void StyleProperties::set_property(CSS::PropertyID id, const StringView& value)
+{
+    m_property_values.set((unsigned)id, StringStyleValue::create(value));
+}
+
 Optional<NonnullRefPtr<StyleValue>> StyleProperties::property(CSS::PropertyID id) const
 {
     auto it = m_property_values.find((unsigned)id);
@@ -69,6 +74,16 @@ Length StyleProperties::length_or_fallback(CSS::PropertyID id, const Length& fal
     if (!value.has_value())
         return fallback;
     return value.value()->to_length();
+}
+
+LengthBox StyleProperties::length_box(CSS::PropertyID left_id, CSS::PropertyID top_id, CSS::PropertyID right_id, CSS::PropertyID bottom_id) const
+{
+    LengthBox box;
+    box.left = length_or_fallback(left_id, {});
+    box.top = length_or_fallback(top_id, {});
+    box.right = length_or_fallback(right_id, {});
+    box.bottom = length_or_fallback(bottom_id, {});
+    return box;
 }
 
 String StyleProperties::string_or_fallback(CSS::PropertyID id, const StringView& fallback) const
@@ -134,7 +149,7 @@ void StyleProperties::load_font() const
 
     // FIXME: Do this properly, with quote handling etc.
     for (auto& font_name : font_family.split(',')) {
-        font_name = font_name.trim_spaces();
+        font_name = font_name.trim_whitespace();
         if (font_name == "monospace")
             font_name = "Csilla";
 
@@ -162,12 +177,20 @@ void StyleProperties::load_font() const
     return;
 }
 
-float StyleProperties::line_height() const
+float StyleProperties::line_height(const LayoutNode& layout_node) const
 {
-    auto line_height_length = length_or_fallback(CSS::PropertyID::LineHeight, {});
+    auto line_height_length = length_or_fallback(CSS::PropertyID::LineHeight, Length::make_auto());
     if (line_height_length.is_absolute())
-        return (float)font().glyph_height() * line_height_length.to_px();
+        return (float)line_height_length.to_px(layout_node);
     return (float)font().glyph_height() * 1.4f;
+}
+
+Optional<int> StyleProperties::z_index() const
+{
+    auto value = property(CSS::PropertyID::ZIndex);
+    if (!value.has_value())
+        return {};
+    return static_cast<int>(value.value()->to_length().raw_value());
 }
 
 CSS::Position StyleProperties::position() const
@@ -204,6 +227,84 @@ bool StyleProperties::operator==(const StyleProperties& other) const
     }
 
     return true;
+}
+
+CSS::TextAlign StyleProperties::text_align() const
+{
+    auto string = string_or_fallback(CSS::PropertyID::TextAlign, "left");
+    if (string == "center")
+        return CSS::TextAlign::Center;
+    if (string == "right")
+        return CSS::TextAlign::Right;
+    if (string == "justify")
+        return CSS::TextAlign::Justify;
+    if (string == "-libweb-center")
+        return CSS::TextAlign::VendorSpecificCenter;
+    // Otherwise, just assume "left"..
+    return CSS::TextAlign::Left;
+}
+
+Optional<CSS::WhiteSpace> StyleProperties::white_space() const
+{
+    auto value = property(CSS::PropertyID::WhiteSpace);
+    if (!value.has_value() || !value.value()->is_string())
+        return {};
+    auto string = value.value()->to_string();
+    if (string == "normal")
+        return CSS::WhiteSpace::Normal;
+    if (string == "nowrap")
+        return CSS::WhiteSpace::Nowrap;
+    if (string == "pre")
+        return CSS::WhiteSpace::Pre;
+    if (string == "pre-line")
+        return CSS::WhiteSpace::PreLine;
+    if (string == "pre-wrap")
+        return CSS::WhiteSpace::PreWrap;
+    return {};
+}
+
+Optional<CSS::Float> StyleProperties::float_() const
+{
+    auto value = property(CSS::PropertyID::Float);
+    if (!value.has_value() || !value.value()->is_string())
+        return {};
+    auto string = value.value()->to_string();
+    if (string == "none")
+        return CSS::Float::None;
+    if (string == "left")
+        return CSS::Float::Left;
+    if (string == "right")
+        return CSS::Float::Right;
+    return {};
+}
+
+CSS::Display StyleProperties::display() const
+{
+    auto display = string_or_fallback(CSS::PropertyID::Display, "inline");
+    if (display == "none")
+        return CSS::Display::None;
+    if (display == "block")
+        return CSS::Display::Block;
+    if (display == "inline")
+        return CSS::Display::Inline;
+    if (display == "inline-block")
+        return CSS::Display::InlineBlock;
+    if (display == "list-item")
+        return CSS::Display::ListItem;
+    if (display == "table")
+        return CSS::Display::Table;
+    if (display == "table-row")
+        return CSS::Display::TableRow;
+    if (display == "table-cell")
+        return CSS::Display::TableCell;
+    if (display == "table-row-group")
+        return CSS::Display::TableRowGroup;
+    if (display == "table-header-group")
+        return CSS::Display::TableHeaderGroup;
+    if (display == "table-footer-group")
+        return CSS::Display::TableFooterGroup;
+    dbg() << "Unknown display type: _" << display << "_";
+    return CSS::Display::Block;
 }
 
 }

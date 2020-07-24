@@ -35,13 +35,13 @@ class Element;
 
 class LayoutBlock : public LayoutBox {
 public:
-    LayoutBlock(const Node*, NonnullRefPtr<StyleProperties>);
+    LayoutBlock(Document&, const Node*, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutBlock() override;
 
     virtual const char* class_name() const override { return "LayoutBlock"; }
 
-    virtual void layout() override;
-    virtual void render(RenderingContext&) override;
+    virtual void layout(LayoutMode = LayoutMode::Default) override;
+    virtual void paint(PaintContext&, PaintPhase) override;
 
     virtual LayoutNode& inline_wrapper() override;
 
@@ -51,7 +51,7 @@ public:
     LineBox& ensure_last_line_box();
     LineBox& add_line_box();
 
-    virtual HitTestResult hit_test(const Gfx::Point&) const override;
+    virtual HitTestResult hit_test(const Gfx::IntPoint&) const override;
 
     LayoutBlock* previous_sibling() { return to<LayoutBlock>(LayoutNode::previous_sibling()); }
     const LayoutBlock* previous_sibling() const { return to<LayoutBlock>(LayoutNode::previous_sibling()); }
@@ -63,19 +63,36 @@ public:
     template<typename Callback>
     void for_each_fragment(Callback) const;
 
-    virtual void split_into_lines(LayoutBlock& container) override;
+    virtual void split_into_lines(LayoutBlock& container, LayoutMode) override;
+
+    void layout_inside(LayoutMode);
+
+protected:
+    void compute_width();
+    void compute_height();
+    void layout_absolutely_positioned_descendants();
+
+    virtual float width_of_logical_containing_block() const;
 
 private:
     virtual bool is_block() const override { return true; }
 
+    struct ShrinkToFitResult {
+        float preferred_width { 0 };
+        float preferred_minimum_width { 0 };
+    };
+    ShrinkToFitResult calculate_shrink_to_fit_width();
+
+    void compute_width_for_absolutely_positioned_block();
+
+    void place_block_level_non_replaced_element_in_normal_flow(LayoutBlock&);
+    void place_block_level_replaced_element_in_normal_flow(LayoutReplaced&);
+    void layout_absolutely_positioned_descendant(LayoutBox&);
+
     NonnullRefPtr<StyleProperties> style_for_anonymous_block() const;
 
-    void layout_inline_children();
-    void layout_block_children();
-
-    void compute_width();
-    void compute_position();
-    void compute_height();
+    void layout_inline_children(LayoutMode);
+    void layout_contained_boxes(LayoutMode);
 
     Vector<LineBox> m_line_boxes;
 };
@@ -103,7 +120,7 @@ void LayoutBlock::for_each_fragment(Callback callback) const
 }
 
 template<>
-inline bool is<LayoutBlock>(const LayoutNode& node)
+ALWAYS_INLINE bool is<LayoutBlock>(const LayoutNode& node)
 {
     return node.is_block();
 }

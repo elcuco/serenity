@@ -108,7 +108,7 @@ void Compositor::compose()
 {
     auto& wm = WindowManager::the();
     if (m_wallpaper_mode == WallpaperMode::Unchecked)
-        m_wallpaper_mode = mode_to_enum(wm.wm_config()->read_entry("Background", "Mode", "simple"));
+        m_wallpaper_mode = mode_to_enum(wm.config()->read_entry("Background", "Mode", "simple"));
     auto& ws = Screen::the();
 
     auto dirty_rects = move(m_dirty_rects);
@@ -118,10 +118,10 @@ void Compositor::compose()
         return;
     }
 
-    dirty_rects.add(Gfx::Rect::intersection(m_last_geometry_label_rect, Screen::the().rect()));
-    dirty_rects.add(Gfx::Rect::intersection(m_last_cursor_rect, Screen::the().rect()));
-    dirty_rects.add(Gfx::Rect::intersection(m_last_dnd_rect, Screen::the().rect()));
-    dirty_rects.add(Gfx::Rect::intersection(current_cursor_rect(), Screen::the().rect()));
+    dirty_rects.add(Gfx::IntRect::intersection(m_last_geometry_label_rect, Screen::the().rect()));
+    dirty_rects.add(Gfx::IntRect::intersection(m_last_cursor_rect, Screen::the().rect()));
+    dirty_rects.add(Gfx::IntRect::intersection(m_last_dnd_rect, Screen::the().rect()));
+    dirty_rects.add(Gfx::IntRect::intersection(current_cursor_rect(), Screen::the().rect()));
 
     auto any_dirty_rect_intersects_window = [&dirty_rects](const Window& window) {
         auto window_frame_rect = window.frame().rect();
@@ -133,14 +133,14 @@ void Compositor::compose()
     };
 
     Color background_color = wm.palette().desktop_background();
-    String background_color_entry = wm.wm_config()->read_entry("Background", "Color", "");
+    String background_color_entry = wm.config()->read_entry("Background", "Color", "");
     if (!background_color_entry.is_empty()) {
         background_color = Color::from_string(background_color_entry).value_or(background_color);
     }
 
     // Paint the wallpaper.
     for (auto& dirty_rect : dirty_rects.rects()) {
-        if (wm.any_opaque_window_contains_rect(dirty_rect))
+        if (any_opaque_window_contains_rect(dirty_rect))
             continue;
         // FIXME: If the wallpaper is opaque, no need to fill with color!
         m_back_painter->fill_rect(dirty_rect, background_color);
@@ -148,7 +148,7 @@ void Compositor::compose()
             if (m_wallpaper_mode == WallpaperMode::Simple) {
                 m_back_painter->blit(dirty_rect.location(), *m_wallpaper, dirty_rect);
             } else if (m_wallpaper_mode == WallpaperMode::Center) {
-                Gfx::Point offset { ws.size().width() / 2 - m_wallpaper->size().width() / 2,
+                Gfx::IntPoint offset { ws.size().width() / 2 - m_wallpaper->size().width() / 2,
                     ws.size().height() / 2 - m_wallpaper->size().height() / 2 };
                 m_back_painter->blit_offset(dirty_rect.location(), *m_wallpaper,
                     dirty_rect, offset);
@@ -172,7 +172,7 @@ void Compositor::compose()
         m_back_painter->add_clip_rect(window.frame().rect());
         RefPtr<Gfx::Bitmap> backing_store = window.backing_store();
         for (auto& dirty_rect : dirty_rects.rects()) {
-            if (wm.any_opaque_window_above_this_one_contains_rect(window, dirty_rect))
+            if (!window.is_fullscreen() && any_opaque_window_above_this_one_contains_rect(window, dirty_rect))
                 continue;
             Gfx::PainterStateSaver saver(*m_back_painter);
             m_back_painter->add_clip_rect(dirty_rect);
@@ -191,7 +191,7 @@ void Compositor::compose()
             // we want to try to blit the backing store at the same place
             // it was previously, and fill the rest of the window with its
             // background color.
-            Gfx::Rect backing_rect;
+            Gfx::IntRect backing_rect;
             backing_rect.set_size(backing_store->size());
             switch (WindowManager::the().resize_direction_of_window(window)) {
             case ResizeDirection::None:
@@ -216,16 +216,23 @@ void Compositor::compose()
                 break;
             }
 
-            Gfx::Rect dirty_rect_in_backing_coordinates = dirty_rect
-                                                              .intersected(window.rect())
-                                                              .intersected(backing_rect)
-                                                              .translated(-backing_rect.location());
+            Gfx::IntRect dirty_rect_in_backing_coordinates = dirty_rect
+                                                                 .intersected(window.rect())
+                                                                 .intersected(backing_rect)
+                                                                 .translated(-backing_rect.location());
 
             if (dirty_rect_in_backing_coordinates.is_empty())
                 continue;
             auto dst = backing_rect.location().translated(dirty_rect_in_backing_coordinates.location());
 
-            m_back_painter->blit(dst, *backing_store, dirty_rect_in_backing_coordinates, window.opacity());
+            if (window.client() && window.client()->is_unresponsive()) {
+                m_back_painter->blit_filtered(dst, *backing_store, dirty_rect_in_backing_coordinates, [](Color src) {
+                    return src.to_grayscale().darkened(0.75f);
+                });
+            } else {
+                m_back_painter->blit(dst, *backing_store, dirty_rect_in_backing_coordinates, window.opacity());
+            }
+
             for (auto background_rect : window.rect().shatter(backing_rect))
                 m_back_painter->fill_rect(background_rect, wm.palette().window());
         }
@@ -259,9 +266,9 @@ void Compositor::compose()
         flush(r);
 }
 
-void Compositor::flush(const Gfx::Rect& a_rect)
+void Compositor::flush(const Gfx::IntRect& a_rect)
 {
-    auto rect = Gfx::Rect::intersection(a_rect, Screen::the().rect());
+    auto rect = Gfx::IntRect::intersection(a_rect, Screen::the().rect());
 
     Gfx::RGBA32* front_ptr = m_front_bitmap->scanline(rect.y()) + rect.x();
     Gfx::RGBA32* back_ptr = m_back_bitmap->scanline(rect.y()) + rect.x();
@@ -300,9 +307,9 @@ void Compositor::invalidate()
     invalidate(Screen::the().rect());
 }
 
-void Compositor::invalidate(const Gfx::Rect& a_rect)
+void Compositor::invalidate(const Gfx::IntRect& a_rect)
 {
-    auto rect = Gfx::Rect::intersection(a_rect, Screen::the().rect());
+    auto rect = Gfx::IntRect::intersection(a_rect, Screen::the().rect());
     if (rect.is_empty())
         return;
 
@@ -320,8 +327,8 @@ void Compositor::invalidate(const Gfx::Rect& a_rect)
 bool Compositor::set_background_color(const String& background_color)
 {
     auto& wm = WindowManager::the();
-    wm.wm_config()->write_entry("Background", "Color", background_color);
-    bool ret_val = wm.wm_config()->sync();
+    wm.config()->write_entry("Background", "Color", background_color);
+    bool ret_val = wm.config()->sync();
 
     if (ret_val)
         Compositor::invalidate();
@@ -332,8 +339,8 @@ bool Compositor::set_background_color(const String& background_color)
 bool Compositor::set_wallpaper_mode(const String& mode)
 {
     auto& wm = WindowManager::the();
-    wm.wm_config()->write_entry("Background", "Mode", mode);
-    bool ret_val = wm.wm_config()->sync();
+    wm.config()->write_entry("Background", "Mode", mode);
+    bool ret_val = wm.config()->sync();
 
     if (ret_val) {
         m_wallpaper_mode = mode_to_enum(mode);
@@ -384,7 +391,7 @@ void Compositor::run_animations()
             float width_delta_per_step = (float)(from_rect.width() - to_rect.width()) / minimize_animation_steps;
             float height_delta_per_step = (float)(from_rect.height() - to_rect.height()) / minimize_animation_steps;
 
-            Gfx::Rect rect {
+            Gfx::IntRect rect {
                 from_rect.x() - (int)(x_delta_per_step * animation_index),
                 from_rect.y() - (int)(y_delta_per_step * animation_index),
                 from_rect.width() - (int)(width_delta_per_step * animation_index),
@@ -414,14 +421,17 @@ bool Compositor::set_resolution(int desired_width, int desired_height)
         return true;
 
     // Make sure it's impossible to set an invalid resolution
-    ASSERT(desired_width >= 640 && desired_height >= 480);
+    if (!(desired_width >= 640 && desired_height >= 480)) {
+        dbg() << "Compositor: Tried to set invalid resolution: " << desired_width << "x" << desired_height;
+        return false;
+    }
     bool success = Screen::the().set_resolution(desired_width, desired_height);
     init_bitmaps();
     compose();
     return success;
 }
 
-Gfx::Rect Compositor::current_cursor_rect() const
+Gfx::IntRect Compositor::current_cursor_rect() const
 {
     auto& wm = WindowManager::the();
     return { Screen::the().cursor_location().translated(-wm.active_cursor().hotspot()), wm.active_cursor().size() };
@@ -449,7 +459,7 @@ void Compositor::draw_geometry_label()
         int height_steps = (window_being_moved_or_resized->height() - window_being_moved_or_resized->base_size().height()) / window_being_moved_or_resized->size_increment().height();
         geometry_string = String::format("%s (%dx%d)", geometry_string.characters(), width_steps, height_steps);
     }
-    auto geometry_label_rect = Gfx::Rect { 0, 0, wm.font().width(geometry_string) + 16, wm.font().glyph_height() + 10 };
+    auto geometry_label_rect = Gfx::IntRect { 0, 0, wm.font().width(geometry_string) + 16, wm.font().glyph_height() + 10 };
     geometry_label_rect.center_within(window_being_moved_or_resized->rect());
     m_back_painter->fill_rect(geometry_label_rect, wm.palette().window());
     m_back_painter->draw_rect(geometry_label_rect, wm.palette().threed_shadow2());
@@ -460,7 +470,7 @@ void Compositor::draw_geometry_label()
 void Compositor::draw_cursor()
 {
     auto& wm = WindowManager::the();
-    Gfx::Rect cursor_rect = current_cursor_rect();
+    Gfx::IntRect cursor_rect = current_cursor_rect();
     m_back_painter->blit(cursor_rect.location(), wm.active_cursor().bitmap(), wm.active_cursor().rect());
 
     if (wm.dnd_client()) {
@@ -502,6 +512,72 @@ void Compositor::decrement_display_link_count(Badge<ClientConnection>)
     --m_display_link_count;
     if (!m_display_link_count)
         m_display_link_notify_timer->stop();
+}
+
+bool Compositor::any_opaque_window_contains_rect(const Gfx::IntRect& rect)
+{
+    bool found_containing_window = false;
+    WindowManager::the().for_each_visible_window_from_back_to_front([&](Window& window) {
+        if (window.is_minimized())
+            return IterationDecision::Continue;
+        if (window.opacity() < 1.0f)
+            return IterationDecision::Continue;
+        if (window.has_alpha_channel()) {
+            // FIXME: Just because the window has an alpha channel doesn't mean it's not opaque.
+            //        Maybe there's some way we could know this?
+            return IterationDecision::Continue;
+        }
+        if (window.frame().rect().contains(rect)) {
+            found_containing_window = true;
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    return found_containing_window;
+};
+
+bool Compositor::any_opaque_window_above_this_one_contains_rect(const Window& a_window, const Gfx::IntRect& rect)
+{
+    bool found_containing_window = false;
+    bool checking = false;
+    WindowManager::the().for_each_visible_window_from_back_to_front([&](Window& window) {
+        if (&window == &a_window) {
+            checking = true;
+            return IterationDecision::Continue;
+        }
+        if (!checking)
+            return IterationDecision::Continue;
+        if (!window.is_visible())
+            return IterationDecision::Continue;
+        if (window.is_minimized())
+            return IterationDecision::Continue;
+        if (window.opacity() < 1.0f)
+            return IterationDecision::Continue;
+        if (window.has_alpha_channel())
+            return IterationDecision::Continue;
+        if (window.frame().rect().contains(rect)) {
+            found_containing_window = true;
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    return found_containing_window;
+};
+
+void Compositor::recompute_occlusions()
+{
+    auto& wm = WindowManager::the();
+    wm.for_each_visible_window_from_back_to_front([&](Window& window) {
+        if (wm.m_switcher.is_visible()) {
+            window.set_occluded(false);
+        } else {
+            if (any_opaque_window_above_this_one_contains_rect(window, window.frame().rect()))
+                window.set_occluded(true);
+            else
+                window.set_occluded(false);
+        }
+        return IterationDecision::Continue;
+    });
 }
 
 }

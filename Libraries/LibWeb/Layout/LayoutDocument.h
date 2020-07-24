@@ -33,20 +33,36 @@ namespace Web {
 
 class LayoutDocument final : public LayoutBlock {
 public:
-    explicit LayoutDocument(const Document&, NonnullRefPtr<StyleProperties>);
+    explicit LayoutDocument(Document&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutDocument() override;
 
     const Document& node() const { return static_cast<const Document&>(*LayoutNode::node()); }
     virtual const char* class_name() const override { return "LayoutDocument"; }
-    virtual void layout() override;
+    virtual void layout(LayoutMode = LayoutMode::Default) override;
+
+    void paint_all_phases(PaintContext&);
+    virtual void paint(PaintContext&, PaintPhase) override;
+
+    virtual HitTestResult hit_test(const Gfx::IntPoint&) const override;
 
     const LayoutRange& selection() const { return m_selection; }
     LayoutRange& selection() { return m_selection; }
 
-    void did_set_viewport_rect(Badge<Frame>, const Gfx::Rect&);
+    void did_set_viewport_rect(Badge<Frame>, const Gfx::IntRect&);
+
+    virtual bool is_root() const override { return true; }
+
+    void build_stacking_context_tree();
 
 private:
     LayoutRange m_selection;
 };
+
+template<>
+inline bool is<LayoutDocument>(const LayoutNode& node)
+{
+    return node.is_root();
+}
+
 
 }

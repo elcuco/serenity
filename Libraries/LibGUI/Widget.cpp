@@ -98,7 +98,7 @@ Widget::Widget()
     , m_background_role(Gfx::ColorRole::Window)
     , m_foreground_role(Gfx::ColorRole::WindowText)
     , m_font(Gfx::Font::default_font())
-    , m_palette(Application::the().palette().impl())
+    , m_palette(Application::the()->palette().impl())
 {
 }
 
@@ -115,6 +115,8 @@ void Widget::child_event(Core::ChildEvent& event)
             else
                 layout()->add_widget(Core::to<Widget>(*event.child()));
         }
+        if (window() && event.child() && Core::is<Widget>(*event.child()))
+            window()->did_add_widget({}, Core::to<Widget>(*event.child()));
     }
     if (event.type() == Event::ChildRemoved) {
         if (layout()) {
@@ -123,17 +125,17 @@ void Widget::child_event(Core::ChildEvent& event)
             else
                 invalidate_layout();
         }
-        if (event.child() && Core::is<Widget>(*event.child()))
+        if (window() && event.child() && Core::is<Widget>(*event.child()))
             window()->did_remove_widget({}, Core::to<Widget>(*event.child()));
         update();
     }
     return Core::Object::child_event(event);
 }
 
-void Widget::set_relative_rect(const Gfx::Rect& a_rect)
+void Widget::set_relative_rect(const Gfx::IntRect& a_rect)
 {
     // Get rid of negative width/height values.
-    Gfx::Rect rect = {
+    Gfx::IntRect rect = {
         a_rect.x(),
         a_rect.y(),
         max(a_rect.width(), 0),
@@ -225,13 +227,6 @@ void Widget::handle_paint_event(PaintEvent& event)
     if (fill_with_background_color()) {
         Painter painter(*this);
         painter.fill_rect(event.rect(), palette().color(background_role()));
-    } else {
-#ifdef DEBUG_WIDGET_UNDERDRAW
-        // FIXME: This is a bit broken.
-        // If the widget is not opaque, let's not mess it up with debugging color.
-        Painter painter(*this);
-        painter.fill_rect(rect(), Color::Red);
-#endif
     }
     paint_event(event);
     for_each_child_widget([&](auto& child) {
@@ -248,6 +243,13 @@ void Widget::handle_paint_event(PaintEvent& event)
     if (is_being_inspected()) {
         Painter painter(*this);
         painter.draw_rect(rect(), Color::Magenta);
+    }
+
+    if (Application::the()->focus_debugging_enabled()) {
+        if (is_focused()) {
+            Painter painter(*this);
+            painter.draw_rect(rect(), Color::Cyan);
+        }
     }
 }
 
@@ -316,13 +318,13 @@ void Widget::handle_mousedoubleclick_event(MouseEvent& event)
 void Widget::handle_enter_event(Core::Event& event)
 {
     if (has_tooltip())
-        Application::the().show_tooltip(m_tooltip, screen_relative_rect().center().translated(0, height() / 2));
+        Application::the()->show_tooltip(m_tooltip, screen_relative_rect().center().translated(0, height() / 2));
     enter_event(event);
 }
 
 void Widget::handle_leave_event(Core::Event& event)
 {
-    Application::the().hide_tooltip();
+    Application::the()->hide_tooltip();
     leave_event(event);
 }
 
@@ -363,8 +365,9 @@ void Widget::keydown_event(KeyEvent& event)
     event.ignore();
 }
 
-void Widget::keyup_event(KeyEvent&)
+void Widget::keyup_event(KeyEvent& event)
 {
+    event.ignore();
 }
 
 void Widget::mousedown_event(MouseEvent&)
@@ -430,7 +433,7 @@ void Widget::update()
     update(rect());
 }
 
-void Widget::update(const Gfx::Rect& rect)
+void Widget::update(const Gfx::IntRect& rect)
 {
     if (!is_visible())
         return;
@@ -450,7 +453,7 @@ void Widget::update(const Gfx::Rect& rect)
         window->update(rect.translated(window_relative_rect().location()));
 }
 
-Gfx::Rect Widget::window_relative_rect() const
+Gfx::IntRect Widget::window_relative_rect() const
 {
     auto rect = relative_rect();
     for (auto* parent = parent_widget(); parent; parent = parent->parent_widget()) {
@@ -459,12 +462,12 @@ Gfx::Rect Widget::window_relative_rect() const
     return rect;
 }
 
-Gfx::Rect Widget::screen_relative_rect() const
+Gfx::IntRect Widget::screen_relative_rect() const
 {
     return window_relative_rect().translated(window()->position());
 }
 
-Widget* Widget::child_at(const Gfx::Point& point) const
+Widget* Widget::child_at(const Gfx::IntPoint& point) const
 {
     for (int i = children().size() - 1; i >= 0; --i) {
         if (!Core::is<Widget>(children()[i]))
@@ -478,7 +481,7 @@ Widget* Widget::child_at(const Gfx::Point& point) const
     return nullptr;
 }
 
-Widget::HitTestResult Widget::hit_test(const Gfx::Point& position, ShouldRespectGreediness should_respect_greediness)
+Widget::HitTestResult Widget::hit_test(const Gfx::IntPoint& position, ShouldRespectGreediness should_respect_greediness)
 {
     if (should_respect_greediness == ShouldRespectGreediness::Yes && is_greedy_for_hits())
         return { this, position };
@@ -499,9 +502,12 @@ bool Widget::is_focused() const
     auto* win = window();
     if (!win)
         return false;
-    if (!win->is_active())
-        return false;
-    return win->focused_widget() == this;
+    // Accessory windows are not active despite being the active
+    // input window. So we can have focus if either we're the active
+    // input window or we're the active window
+    if (win->is_active_input() || win->is_active())
+        return win->focused_widget() == this;
+    return false;
 }
 
 void Widget::set_focus(bool focus)
@@ -547,7 +553,7 @@ bool Widget::global_cursor_tracking() const
     return win->global_cursor_tracking_widget() == this;
 }
 
-void Widget::set_preferred_size(const Gfx::Size& size)
+void Widget::set_preferred_size(const Gfx::IntSize& size)
 {
     if (m_preferred_size == size)
         return;
@@ -825,7 +831,7 @@ void Widget::set_content_margins(const Margins& margins)
     invalidate_layout();
 }
 
-Gfx::Rect Widget::content_rect() const
+Gfx::IntRect Widget::content_rect() const
 {
     auto rect = relative_rect();
     rect.move_by(m_content_margins.left(), m_content_margins.top());

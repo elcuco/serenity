@@ -24,9 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "Clipboard.h"
-#include <Kernel/KeyCode.h>
-#include <Kernel/MousePacket.h>
+#include <Kernel/API/MousePacket.h>
 #include <LibCore/LocalSocket.h>
 #include <LibCore/Object.h>
 #include <WindowServer/ClientConnection.h>
@@ -65,7 +63,7 @@ EventLoop::EventLoop()
         }
         static int s_next_client_id = 0;
         int client_id = ++s_next_client_id;
-        IPC::new_client_connection<ClientConnection>(*client_socket, client_id);
+        IPC::new_client_connection<ClientConnection>(client_socket.release_nonnull(), client_id);
     };
 
     ASSERT(m_keyboard_fd >= 0);
@@ -76,12 +74,6 @@ EventLoop::EventLoop()
 
     m_mouse_notifier = Core::Notifier::construct(m_mouse_fd, Core::Notifier::Read);
     m_mouse_notifier->on_ready_to_read = [this] { drain_mouse(); };
-
-    Clipboard::the().on_content_change = [&] {
-        ClientConnection::for_each_client([&](auto& client) {
-            client.notify_about_clipboard_contents_changed();
-        });
-    };
 }
 
 EventLoop::~EventLoop()

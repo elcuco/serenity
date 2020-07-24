@@ -24,15 +24,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LibGfx/Font.h>
-#include <LibGfx/StylePainter.h>
 #include <LibGUI/Painter.h>
+#include <LibGfx/Font.h>
+#include <LibGfx/ImageDecoder.h>
+#include <LibGfx/StylePainter.h>
 #include <LibWeb/Layout/LayoutImage.h>
 
 namespace Web {
 
-LayoutImage::LayoutImage(const HTMLImageElement& element, NonnullRefPtr<StyleProperties> style)
-    : LayoutReplaced(element, move(style))
+LayoutImage::LayoutImage(Document& document, const Element& element, NonnullRefPtr<StyleProperties> style, const ImageLoader& image_loader)
+    : LayoutReplaced(document, element, move(style))
+    , m_image_loader(image_loader)
 {
 }
 
@@ -40,50 +42,88 @@ LayoutImage::~LayoutImage()
 {
 }
 
-void LayoutImage::layout()
+int LayoutImage::preferred_width() const
 {
-    if (node().preferred_width() && node().preferred_height()) {
-        rect().set_width(node().preferred_width());
-        rect().set_height(node().preferred_height());
-    } else if (renders_as_alt_text()) {
-        auto& font = Gfx::Font::default_font();
-        auto alt = node().alt();
-        if (alt.is_empty())
-            alt = node().src();
-        rect().set_width(font.width(alt) + 16);
-        rect().set_height(font.glyph_height() + 16);
-    } else {
-        rect().set_width(16);
-        rect().set_height(16);
-    }
-
-    LayoutReplaced::layout();
+    return node().attribute(HTML::AttributeNames::width).to_int().value_or(m_image_loader.width());
 }
 
-void LayoutImage::render(RenderingContext& context)
+int LayoutImage::preferred_height() const
+{
+    return node().attribute(HTML::AttributeNames::height).to_int().value_or(m_image_loader.height());
+}
+
+void LayoutImage::layout(LayoutMode layout_mode)
+{
+    if (m_image_loader.width()) {
+        set_has_intrinsic_width(true);
+        set_intrinsic_width(m_image_loader.width());
+    }
+    if (m_image_loader.height()) {
+        set_has_intrinsic_height(true);
+        set_intrinsic_height(m_image_loader.height());
+    }
+
+    if (m_image_loader.width() && m_image_loader.height()) {
+        set_has_intrinsic_ratio(true);
+        set_intrinsic_ratio((float)m_image_loader.width() / (float)m_image_loader.height());
+    } else {
+        set_has_intrinsic_ratio(false);
+    }
+
+    if (renders_as_alt_text()) {
+        auto& image_element = to<HTMLImageElement>(node());
+        auto& font = Gfx::Font::default_font();
+        auto alt = image_element.alt();
+        if (alt.is_empty())
+            alt = image_element.src();
+        set_width(font.width(alt) + 16);
+        set_height(font.glyph_height() + 16);
+    }
+
+    if (!has_intrinsic_width() && !has_intrinsic_height()) {
+        set_width(16);
+        set_height(16);
+    }
+
+    LayoutReplaced::layout(layout_mode);
+}
+
+void LayoutImage::paint(PaintContext& context, PaintPhase phase)
 {
     if (!is_visible())
         return;
 
     // FIXME: This should be done at a different level. Also rect() does not include padding etc!
-    if (!context.viewport_rect().intersects(enclosing_int_rect(rect())))
+    if (!context.viewport_rect().intersects(enclosing_int_rect(absolute_rect())))
         return;
 
-    if (renders_as_alt_text()) {
-        context.painter().set_font(Gfx::Font::default_font());
-        Gfx::StylePainter::paint_frame(context.painter(), enclosing_int_rect(rect()), context.palette(), Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
-        auto alt = node().alt();
-        if (alt.is_empty())
-            alt = node().src();
-        context.painter().draw_text(enclosing_int_rect(rect()), alt, Gfx::TextAlignment::Center, style().color_or_fallback(CSS::PropertyID::Color, document(), Color::Black), Gfx::TextElision::Right);
-    } else if (node().bitmap())
-        context.painter().draw_scaled_bitmap(enclosing_int_rect(rect()), *node().bitmap(), node().bitmap()->rect());
-    LayoutReplaced::render(context);
+    LayoutReplaced::paint(context, phase);
+
+    if (phase == PaintPhase::Foreground) {
+        if (renders_as_alt_text()) {
+            auto& image_element = to<HTMLImageElement>(node());
+            context.painter().set_font(Gfx::Font::default_font());
+            Gfx::StylePainter::paint_frame(context.painter(), enclosing_int_rect(absolute_rect()), context.palette(), Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
+            auto alt = image_element.alt();
+            if (alt.is_empty())
+                alt = image_element.src();
+            context.painter().draw_text(enclosing_int_rect(absolute_rect()), alt, Gfx::TextAlignment::Center, specified_style().color_or_fallback(CSS::PropertyID::Color, document(), Color::Black), Gfx::TextElision::Right);
+        } else if (auto* bitmap = m_image_loader.bitmap()) {
+            context.painter().draw_scaled_bitmap(enclosing_int_rect(absolute_rect()), *bitmap, bitmap->rect());
+        }
+    }
 }
 
 bool LayoutImage::renders_as_alt_text() const
 {
-    return !node().image_decoder();
+    if (is<HTMLImageElement>(node()))
+        return !m_image_loader.has_image();
+    return false;
+}
+
+void LayoutImage::set_visible_in_viewport(Badge<LayoutDocument>, bool visible_in_viewport)
+{
+    m_image_loader.set_visible_in_viewport(visible_in_viewport);
 }
 
 }

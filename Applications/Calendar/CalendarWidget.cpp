@@ -37,7 +37,7 @@
 
 CalendarWidget::CalendarWidget()
 {
-    m_calendar = make<Calendar>(Core::DateTime::now());
+    m_calendar = adopt(*new Calendar(Core::DateTime::now()));
 
     set_fill_with_background_color(true);
     set_layout<GUI::VerticalBoxLayout>();
@@ -64,7 +64,7 @@ CalendarWidget::CalendarWidget()
     m_prev_month_button->set_font(Gfx::Font::default_bold_font());
     m_prev_month_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_prev_month_button->set_preferred_size(40, 40);
-    m_prev_month_button->on_click = [this] {
+    m_prev_month_button->on_click = [this](auto) {
         int m_target_month = m_calendar->selected_month() - 1;
         int m_target_year = m_calendar->selected_year();
 
@@ -79,7 +79,7 @@ CalendarWidget::CalendarWidget()
     m_next_month_button->set_font(Gfx::Font::default_bold_font());
     m_next_month_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_next_month_button->set_preferred_size(40, 40);
-    m_next_month_button->on_click = [this] {
+    m_next_month_button->on_click = [this](auto) {
         int m_target_month = m_calendar->selected_month() + 1;
         int m_target_year = m_calendar->selected_year();
 
@@ -100,7 +100,7 @@ CalendarWidget::CalendarWidget()
     m_add_event_button = top_right_container.add<GUI::Button>("Add Event");
     m_add_event_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_add_event_button->set_preferred_size(100, 25);
-    m_add_event_button->on_click = [this] {
+    m_add_event_button->on_click = [this](auto) {
         show_add_event_window();
     };
 
@@ -196,7 +196,7 @@ void CalendarWidget::update_calendar_tiles(int target_year, int target_month)
 
 void CalendarWidget::show_add_event_window()
 {
-    AddEventDialog::show(*move(m_calendar), Core::DateTime::now(), window());
+    AddEventDialog::show(m_calendar, Core::DateTime::now(), window());
 }
 
 CalendarWidget::CalendarTile::CalendarTile(Calendar& calendar, int index, Core::DateTime date_time)
@@ -230,7 +230,7 @@ void CalendarWidget::CalendarTile::doubleclick_event(GUI::MouseEvent& event)
 {
     GUI::Widget::doubleclick_event(event);
     //TOOD: Should be calling show_add_event_window. Would we just replace m_calender /w m_calender_widget?
-    AddEventDialog::show(&m_calendar, m_date_time, window());
+    AddEventDialog::show(m_calendar, m_date_time, window());
 }
 
 void CalendarWidget::CalendarTile::paint_event(GUI::PaintEvent& event)
@@ -249,24 +249,24 @@ void CalendarWidget::CalendarTile::paint_event(GUI::PaintEvent& event)
         painter.draw_line(frame_inner_rect().top_left(), frame_inner_rect().top_right(), Color::NamedColor::Black);
     painter.draw_line(frame_inner_rect().bottom_left(), frame_inner_rect().bottom_right(), Color::NamedColor::Black);
 
-    Gfx::Rect day_rect = Gfx::Rect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
+    Gfx::IntRect day_rect = Gfx::IntRect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
 
     int weekday_characters_width = (font().glyph_width('0') * (m_weekday_name.length() + 1)) + 4;
     if (m_display_weekday_name && (frame_inner_rect().height() > (font().glyph_height() + 4) * 2) && (frame_inner_rect().width() > weekday_characters_width)) {
-        auto weekday_rect = Gfx::Rect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
+        auto weekday_rect = Gfx::IntRect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
         weekday_rect.set_top(frame_inner_rect().y() + 2);
         painter.draw_text(weekday_rect, m_weekday_name, Gfx::Font::default_bold_font(), Gfx::TextAlignment::Center, palette().base_text());
         day_rect.set_y(frame_inner_rect().y() + 15);
     } else {
-        day_rect = Gfx::Rect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
+        day_rect = Gfx::IntRect(frame_inner_rect().x(), frame_inner_rect().y(), frame_inner_rect().width(), font().glyph_height() + 4);
         day_rect.set_y(frame_inner_rect().y() + 4);
     }
 
     int highlight_rect_width = (font().glyph_width('0') * (m_display_date.length() + 1)) + 2;
     auto display_date = (m_date_time.day() == 1 && frame_inner_rect().width() > highlight_rect_width) ? m_display_date : String::number(m_date_time.day());
 
-    if (m_calendar.is_today(m_date_time)) {
-        auto highlight_rect = Gfx::Rect(day_rect.width() / 2 - (highlight_rect_width / 2), day_rect.y(), highlight_rect_width, font().glyph_height() + 4);
+    if (m_calendar->is_today(m_date_time)) {
+        auto highlight_rect = Gfx::IntRect(day_rect.width() / 2 - (highlight_rect_width / 2), day_rect.y(), highlight_rect_width, font().glyph_height() + 4);
         painter.draw_rect(highlight_rect, palette().base_text());
         painter.draw_text(day_rect, display_date, Gfx::Font::default_bold_font(), Gfx::TextAlignment::Center, palette().base_text());
     } else

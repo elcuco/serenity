@@ -35,7 +35,7 @@ class RadioButton : public AbstractButton {
 public:
     virtual ~RadioButton() override;
 
-    virtual void click() override;
+    virtual void click(unsigned modifiers = 0) override;
 
 protected:
     explicit RadioButton(const StringView& text = {});
@@ -50,7 +50,7 @@ private:
 
     template<typename Callback>
     void for_each_in_group(Callback);
-    static Gfx::Size circle_size();
+    static Gfx::IntSize circle_size();
 };
 
 }

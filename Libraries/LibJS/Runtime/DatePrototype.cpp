@@ -36,115 +36,120 @@
 
 namespace JS {
 
-static Date* this_date_from_interpreter(Interpreter& interpreter)
+static Date* typed_this(Interpreter& interpreter, GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return nullptr;
     if (!this_object->is_date()) {
-        interpreter.throw_exception<TypeError>("object must be of type Date");
+        interpreter.throw_exception<TypeError>(ErrorType::NotA, "Date");
         return nullptr;
     }
     return static_cast<Date*>(this_object);
 }
 
-DatePrototype::DatePrototype()
-    : Object(interpreter().global_object().object_prototype())
+DatePrototype::DatePrototype(GlobalObject& global_object)
+    : Object(*global_object.object_prototype())
 {
+}
+
+void DatePrototype::initialize(GlobalObject& global_object)
+{
+    Object::initialize(global_object);
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    put_native_function("getDate", get_date, 0, attr);
-    put_native_function("getDay", get_day, 0, attr);
-    put_native_function("getFullYear", get_full_year, 0, attr);
-    put_native_function("getHours", get_hours, 0, attr);
-    put_native_function("getMilliseconds", get_milliseconds, 0, attr);
-    put_native_function("getMinutes", get_minutes, 0, attr);
-    put_native_function("getMonth", get_month, 0, attr);
-    put_native_function("getSeconds", get_seconds, 0, attr);
-    put_native_function("getTime", get_time, 0, attr);
-    put_native_function("toDateString", to_date_string, 0, attr);
-    put_native_function("toTimeString", to_time_string, 0, attr);
-    put_native_function("toString", to_string, 0, attr);
+    define_native_function("getDate", get_date, 0, attr);
+    define_native_function("getDay", get_day, 0, attr);
+    define_native_function("getFullYear", get_full_year, 0, attr);
+    define_native_function("getHours", get_hours, 0, attr);
+    define_native_function("getMilliseconds", get_milliseconds, 0, attr);
+    define_native_function("getMinutes", get_minutes, 0, attr);
+    define_native_function("getMonth", get_month, 0, attr);
+    define_native_function("getSeconds", get_seconds, 0, attr);
+    define_native_function("getTime", get_time, 0, attr);
+    define_native_function("toDateString", to_date_string, 0, attr);
+    define_native_function("toTimeString", to_time_string, 0, attr);
+    define_native_function("toString", to_string, 0, attr);
 }
 
 DatePrototype::~DatePrototype()
 {
 }
 
-Value DatePrototype::get_date(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_date)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto date = this_object->datetime().day();
     return Value(static_cast<double>(date));
 }
 
-Value DatePrototype::get_day(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_day)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto day = this_object->datetime().weekday();
     return Value(static_cast<double>(day));
 }
 
-Value DatePrototype::get_full_year(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_full_year)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto full_year = this_object->datetime().year();
     return Value(static_cast<double>(full_year));
 }
 
-Value DatePrototype::get_hours(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_hours)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto hours = this_object->datetime().hour();
     return Value(static_cast<double>(hours));
 }
 
-Value DatePrototype::get_milliseconds(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_milliseconds)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto milliseconds = this_object->milliseconds();
     return Value(static_cast<double>(milliseconds));
 }
 
-Value DatePrototype::get_minutes(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_minutes)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto minutes = this_object->datetime().minute();
     return Value(static_cast<double>(minutes));
 }
 
-Value DatePrototype::get_month(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_month)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto months = this_object->datetime().month() - 1;
     return Value(static_cast<double>(months));
 }
 
-Value DatePrototype::get_seconds(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_seconds)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto seconds = this_object->datetime().second();
     return Value(static_cast<double>(seconds));
 }
 
-Value DatePrototype::get_time(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::get_time)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto seconds = this_object->datetime().timestamp();
@@ -152,27 +157,27 @@ Value DatePrototype::get_time(Interpreter& interpreter)
     return Value(static_cast<double>(seconds * 1000 + milliseconds));
 }
 
-Value DatePrototype::to_date_string(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_date_string)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto string = this_object->date_string();
     return js_string(interpreter, move(string));
 }
 
-Value DatePrototype::to_time_string(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_time_string)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto string = this_object->time_string();
     return js_string(interpreter, move(string));
 }
 
-Value DatePrototype::to_string(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(DatePrototype::to_string)
 {
-    auto* this_object = this_date_from_interpreter(interpreter);
+    auto* this_object = typed_this(interpreter, global_object);
     if (!this_object)
         return {};
     auto string = this_object->string();

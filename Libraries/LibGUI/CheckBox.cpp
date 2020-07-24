@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/KeyCode.h>
 #include <LibGUI/CheckBox.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/CharacterBitmap.h>
@@ -78,7 +77,7 @@ void CheckBox::paint_event(PaintEvent& event)
     if (is_enabled() && is_hovered())
         painter.fill_rect(rect(), palette().hover_highlight());
 
-    Gfx::Rect box_rect {
+    Gfx::IntRect box_rect {
         0, height() / 2 - s_box_height / 2 - 1,
         s_box_width, s_box_height
     };
@@ -97,7 +96,7 @@ void CheckBox::paint_event(PaintEvent& event)
     paint_text(painter, text_rect, font(), Gfx::TextAlignment::TopLeft);
 }
 
-void CheckBox::click()
+void CheckBox::click(unsigned)
 {
     if (!is_enabled())
         return;

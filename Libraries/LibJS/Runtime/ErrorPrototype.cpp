@@ -35,67 +35,84 @@
 
 namespace JS {
 
-ErrorPrototype::ErrorPrototype()
-    : Object(interpreter().global_object().object_prototype())
+ErrorPrototype::ErrorPrototype(GlobalObject& global_object)
+    : Object(*global_object.object_prototype())
 {
+}
+
+void ErrorPrototype::initialize(GlobalObject& global_object)
+{
+    Object::initialize(global_object);
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    put_native_property("name", name_getter, name_setter, attr);
-    put_native_property("message", message_getter, nullptr, attr);
-    put_native_function("toString", to_string, 0, attr);
+    define_native_property("name", name_getter, name_setter, attr);
+    define_native_property("message", message_getter, nullptr, attr);
+    define_native_function("toString", to_string, 0, attr);
 }
 
 ErrorPrototype::~ErrorPrototype()
 {
 }
 
-Value ErrorPrototype::name_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(ErrorPrototype::name_getter)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return {};
     if (!this_object->is_error())
-        return interpreter.throw_exception<TypeError>("Not an Error object");
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAn, "Error");
     return js_string(interpreter, static_cast<const Error*>(this_object)->name());
 }
 
-void ErrorPrototype::name_setter(Interpreter& interpreter, Value value)
+JS_DEFINE_NATIVE_SETTER(ErrorPrototype::name_setter)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return;
     if (!this_object->is_error()) {
-        interpreter.throw_exception<TypeError>("Not an Error object");
+        interpreter.throw_exception<TypeError>(ErrorType::NotAn, "Error");
         return;
     }
-    auto name = FlyString(value.to_string());
+    auto name = value.to_string(interpreter);
+    if (interpreter.exception())
+        return;
     static_cast<Error*>(this_object)->set_name(name);
 }
 
-Value ErrorPrototype::message_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(ErrorPrototype::message_getter)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return {};
     if (!this_object->is_error())
-        return interpreter.throw_exception<TypeError>("Not an Error object");
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAn, "Error");
     return js_string(interpreter, static_cast<const Error*>(this_object)->message());
 }
 
-Value ErrorPrototype::to_string(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ErrorPrototype::to_string)
 {
-    if (!interpreter.this_value().is_object())
-        return interpreter.throw_exception<TypeError>("Not an object");
-    auto& this_object = interpreter.this_value().as_object();
+    if (!interpreter.this_value(global_object).is_object())
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAnObject, interpreter.this_value(global_object).to_string_without_side_effects().characters());
+    auto& this_object = interpreter.this_value(global_object).as_object();
 
     String name = "Error";
-    auto object_name_property = this_object.get("name");
-    if (!object_name_property.is_empty() && !object_name_property.is_undefined())
-        name = object_name_property.to_string();
+    auto name_property = this_object.get("name");
+    if (interpreter.exception())
+        return {};
+    if (!name_property.is_empty() && !name_property.is_undefined()) {
+        name = name_property.to_string(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
 
     String message = "";
-    auto object_message_property = this_object.get("message");
-    if (!object_message_property.is_empty() && !object_message_property.is_undefined())
-        message = object_message_property.to_string();
+    auto message_property = this_object.get("message");
+    if (interpreter.exception())
+        return {};
+    if (!message_property.is_empty() && !message_property.is_undefined()) {
+        message = message_property.to_string(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
 
     if (name.length() == 0)
         return js_string(interpreter, message);
@@ -105,12 +122,11 @@ Value ErrorPrototype::to_string(Interpreter& interpreter)
 }
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \
-    PrototypeName::PrototypeName()                                            \
-        : Object(interpreter().global_object().error_prototype())             \
+    PrototypeName::PrototypeName(GlobalObject& global_object)                 \
+        : Object(*global_object.error_prototype())                             \
     {                                                                         \
     }                                                                         \
-    PrototypeName::~PrototypeName() { }                                       \
-    const char* PrototypeName::class_name() const { return #PrototypeName; }
+    PrototypeName::~PrototypeName() { }
 
 JS_ENUMERATE_ERROR_SUBCLASSES
 #undef __JS_ENUMERATE

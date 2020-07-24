@@ -28,40 +28,44 @@
 #include <AK/Memory.h>
 #include <AK/SharedBuffer.h>
 #include <AK/String.h>
+#include <LibGfx/BMPLoader.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/PNGLoader.h>
 #include <LibGfx/GIFLoader.h>
+#include <LibGfx/ICOLoader.h>
+#include <LibGfx/JPGLoader.h>
+#include <LibGfx/PBMLoader.h>
+#include <LibGfx/PGMLoader.h>
+#include <LibGfx/PNGLoader.h>
+#include <LibGfx/PPMLoader.h>
 #include <LibGfx/ShareableBitmap.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/mman.h>
-#include <unistd.h>
 
 namespace Gfx {
 
-static bool size_would_overflow(BitmapFormat format, const Size& size)
+static bool size_would_overflow(BitmapFormat format, const IntSize& size)
 {
     if (size.width() < 0 || size.height() < 0)
         return true;
     return Checked<size_t>::multiplication_would_overflow(size.width(), size.height(), Bitmap::bpp_for_format(format));
 }
 
-RefPtr<Bitmap> Bitmap::create(BitmapFormat format, const Size& size)
+RefPtr<Bitmap> Bitmap::create(BitmapFormat format, const IntSize& size)
 {
     if (size_would_overflow(format, size))
         return nullptr;
     return adopt(*new Bitmap(format, size, Purgeable::No));
 }
 
-RefPtr<Bitmap> Bitmap::create_purgeable(BitmapFormat format, const Size& size)
+RefPtr<Bitmap> Bitmap::create_purgeable(BitmapFormat format, const IntSize& size)
 {
     if (size_would_overflow(format, size))
         return nullptr;
     return adopt(*new Bitmap(format, size, Purgeable::Yes));
 }
 
-Bitmap::Bitmap(BitmapFormat format, const Size& size, Purgeable purgeable)
+Bitmap::Bitmap(BitmapFormat format, const IntSize& size, Purgeable purgeable)
     : m_size(size)
     , m_pitch(round_up_to_power_of_two(size.width() * sizeof(RGBA32), 16))
     , m_format(format)
@@ -69,15 +73,19 @@ Bitmap::Bitmap(BitmapFormat format, const Size& size, Purgeable purgeable)
 {
     ASSERT(!m_size.is_empty());
     ASSERT(!size_would_overflow(format, size));
-    if (format == BitmapFormat::Indexed8)
-        m_palette = new RGBA32[256];
+    allocate_palette_from_format(format, {});
+#ifdef __serenity__
     int map_flags = purgeable == Purgeable::Yes ? (MAP_PURGEABLE | MAP_PRIVATE) : (MAP_ANONYMOUS | MAP_PRIVATE);
     m_data = (RGBA32*)mmap_with_name(nullptr, size_in_bytes(), PROT_READ | PROT_WRITE, map_flags, 0, 0, String::format("GraphicsBitmap [%dx%d]", width(), height()).characters());
+#else
+    int map_flags = (MAP_ANONYMOUS | MAP_PRIVATE);
+    m_data = (RGBA32*)mmap(nullptr, size_in_bytes(), PROT_READ | PROT_WRITE, map_flags, 0, 0);
+#endif
     ASSERT(m_data && m_data != (void*)-1);
     m_needs_munmap = true;
 }
 
-RefPtr<Bitmap> Bitmap::create_wrapper(BitmapFormat format, const Size& size, size_t pitch, RGBA32* data)
+RefPtr<Bitmap> Bitmap::create_wrapper(BitmapFormat format, const IntSize& size, size_t pitch, RGBA32* data)
 {
     if (size_would_overflow(format, size))
         return nullptr;
@@ -86,41 +94,51 @@ RefPtr<Bitmap> Bitmap::create_wrapper(BitmapFormat format, const Size& size, siz
 
 RefPtr<Bitmap> Bitmap::load_from_file(const StringView& path)
 {
-    if(path.ends_with(".png"))
-        return load_png(path);
-    if(path.ends_with(".gif"))
-        return load_gif(path);
+#define __ENUMERATE_IMAGE_FORMAT(Name, Ext) \
+    if (path.ends_with(Ext))                \
+        return load_##Name(path);
+    ENUMERATE_IMAGE_FORMATS
+#undef __ENUMERATE_IMAGE_FORMAT
 
     return nullptr;
 }
 
-Bitmap::Bitmap(BitmapFormat format, const Size& size, size_t pitch, RGBA32* data)
+Bitmap::Bitmap(BitmapFormat format, const IntSize& size, size_t pitch, RGBA32* data)
     : m_size(size)
     , m_data(data)
     , m_pitch(pitch)
     , m_format(format)
 {
     ASSERT(!size_would_overflow(format, size));
-    if (format == BitmapFormat::Indexed8)
-        m_palette = new RGBA32[256];
+    allocate_palette_from_format(format, {});
 }
 
-RefPtr<Bitmap> Bitmap::create_with_shared_buffer(BitmapFormat format, NonnullRefPtr<SharedBuffer>&& shared_buffer, const Size& size)
+RefPtr<Bitmap> Bitmap::create_with_shared_buffer(BitmapFormat format, NonnullRefPtr<SharedBuffer>&& shared_buffer, const IntSize& size)
 {
     if (size_would_overflow(format, size))
         return nullptr;
-    return adopt(*new Bitmap(format, move(shared_buffer), size));
+    return adopt(*new Bitmap(format, move(shared_buffer), size, {}));
 }
 
-Bitmap::Bitmap(BitmapFormat format, NonnullRefPtr<SharedBuffer>&& shared_buffer, const Size& size)
+RefPtr<Bitmap> Bitmap::create_with_shared_buffer(BitmapFormat format, NonnullRefPtr<SharedBuffer>&& shared_buffer, const IntSize& size, const Vector<RGBA32>& palette)
+{
+    if (size_would_overflow(format, size))
+        return nullptr;
+    return adopt(*new Bitmap(format, move(shared_buffer), size, palette));
+}
+
+Bitmap::Bitmap(BitmapFormat format, NonnullRefPtr<SharedBuffer>&& shared_buffer, const IntSize& size, const Vector<RGBA32>& palette)
     : m_size(size)
     , m_data((RGBA32*)shared_buffer->data())
     , m_pitch(round_up_to_power_of_two(size.width() * sizeof(RGBA32), 16))
     , m_format(format)
     , m_shared_buffer(move(shared_buffer))
 {
-    ASSERT(format != BitmapFormat::Indexed8);
+    ASSERT(!is_indexed() || !palette.is_empty());
     ASSERT(!size_would_overflow(format, size));
+
+    if (is_indexed(m_format))
+        allocate_palette_from_format(m_format, palette);
 }
 
 RefPtr<Gfx::Bitmap> Bitmap::rotated(Gfx::RotationDirection rotation_direction) const
@@ -174,7 +192,7 @@ RefPtr<Bitmap> Bitmap::to_bitmap_backed_by_shared_buffer() const
     if (m_shared_buffer)
         return *this;
     auto buffer = SharedBuffer::create_with_size(size_in_bytes());
-    auto bitmap = Bitmap::create_with_shared_buffer(m_format, *buffer, m_size);
+    auto bitmap = Bitmap::create_with_shared_buffer(m_format, *buffer, m_size, palette_to_vector());
     if (!bitmap)
         return nullptr;
     memcpy(buffer->data(), scanline(0), size_in_bytes());
@@ -194,12 +212,16 @@ Bitmap::~Bitmap()
 void Bitmap::set_mmap_name(const StringView& name)
 {
     ASSERT(m_needs_munmap);
+#ifdef __serenity__
     ::set_mmap_name(m_data, size_in_bytes(), name.to_string().characters());
+#else
+    (void)name;
+#endif
 }
 
 void Bitmap::fill(Color color)
 {
-    ASSERT(m_format == BitmapFormat::RGB32 || m_format == BitmapFormat::RGBA32);
+    ASSERT(!is_indexed(m_format));
     for (int y = 0; y < height(); ++y) {
         auto* scanline = this->scanline(y);
         fast_u32_fill(scanline, color.value(), width());
@@ -211,11 +233,13 @@ void Bitmap::set_volatile()
     ASSERT(m_purgeable);
     if (m_volatile)
         return;
+#ifdef __serenity__
     int rc = madvise(m_data, size_in_bytes(), MADV_SET_VOLATILE);
     if (rc < 0) {
         perror("madvise(MADV_SET_VOLATILE)");
         ASSERT_NOT_REACHED();
     }
+#endif
     m_volatile = true;
 }
 
@@ -224,11 +248,15 @@ void Bitmap::set_volatile()
     ASSERT(m_purgeable);
     if (!m_volatile)
         return true;
+#ifdef __serenity__
     int rc = madvise(m_data, size_in_bytes(), MADV_SET_NONVOLATILE);
     if (rc < 0) {
         perror("madvise(MADV_SET_NONVOLATILE)");
         ASSERT_NOT_REACHED();
     }
+#else
+    int rc = 0;
+#endif
     m_volatile = false;
     return rc == 0;
 }
@@ -246,6 +274,28 @@ ShareableBitmap Bitmap::to_shareable_bitmap(pid_t peer_pid) const
     if (peer_pid > 0)
         bitmap->shared_buffer()->share_with(peer_pid);
     return ShareableBitmap(*bitmap);
+}
+
+void Bitmap::allocate_palette_from_format(BitmapFormat format, const Vector<RGBA32>& source_palette)
+{
+    size_t size = palette_size(format);
+    if (size == 0)
+        return;
+    m_palette = new RGBA32[size];
+    if (!source_palette.is_empty()) {
+        ASSERT(source_palette.size() == size);
+        memcpy(m_palette, source_palette.data(), size * sizeof(RGBA32));
+    }
+}
+
+Vector<RGBA32> Bitmap::palette_to_vector() const
+{
+    Vector<RGBA32> vector;
+    auto size = palette_size(m_format);
+    vector.ensure_capacity(size);
+    for (size_t i = 0; i < size; ++i)
+        vector.unchecked_append(palette_color(i).value());
+    return vector;
 }
 
 }

@@ -29,8 +29,8 @@
 #include <LibCore/File.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/HTMLLinkElement.h>
+#include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Parser/CSSParser.h>
-#include <LibWeb/ResourceLoader.h>
 
 namespace Web {
 
@@ -43,23 +43,61 @@ HTMLLinkElement::~HTMLLinkElement()
 {
 }
 
-void HTMLLinkElement::inserted_into(Node&)
+void HTMLLinkElement::inserted_into(Node& node)
 {
-    if (rel() == "stylesheet") {
-        URL url = document().complete_url(href());
-        ResourceLoader::the().load(url, [&](auto data, auto&) {
-            if (data.is_null()) {
-                dbg() << "HTMLLinkElement: Failed to load stylesheet: " << href();
-                return;
-            }
-            auto sheet = parse_css(data);
-            if (!sheet) {
-                dbg() << "HTMLLinkElement: Failed to parse stylesheet: " << href();
-                return;
-            }
-            document().add_sheet(*sheet);
-            document().update_style();
-        });
+    HTMLElement::inserted_into(node);
+
+    if (m_relationship & Relationship::Stylesheet && !(m_relationship & Relationship::Alternate))
+        load_stylesheet(document().complete_url(href()));
+}
+
+void HTMLLinkElement::resource_did_fail()
+{
+}
+
+void HTMLLinkElement::resource_did_load()
+{
+    ASSERT(resource());
+    if (!resource()->has_encoded_data())
+        return;
+
+    dbg() << "HTMLLinkElement: Resource did load, looks good! " << href();
+
+    auto sheet = parse_css(CSS::ParsingContext(document()), resource()->encoded_data());
+    if (!sheet) {
+        dbg() << "HTMLLinkElement: Failed to parse stylesheet: " << href();
+        return;
+    }
+
+    // Transfer the rules from the successfully parsed sheet into the sheet we've already inserted.
+    m_style_sheet->rules() = sheet->rules();
+
+    document().update_style();
+}
+
+void HTMLLinkElement::load_stylesheet(const URL& url)
+{
+    // First insert an empty style sheet in the document sheet list.
+    // There's probably a nicer way to do this, but this ensures that sheets are in document order.
+    m_style_sheet = StyleSheet::create({});
+    document().style_sheets().add_sheet(*m_style_sheet);
+
+    LoadRequest request;
+    request.set_url(url);
+    set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
+}
+
+void HTMLLinkElement::parse_attribute(const FlyString& name, const String& value)
+{
+    if (name == HTML::AttributeNames::rel) {
+        m_relationship = 0;
+        auto parts = value.split_view(' ');
+        for (auto& part : parts) {
+            if (part == "stylesheet")
+                m_relationship |= Relationship::Stylesheet;
+            else if (part == "alternate")
+                m_relationship |= Relationship::Alternate;
+        }
     }
 }
 

@@ -42,9 +42,9 @@ struct NumericLimits<bool> {
 };
 
 template<>
-struct NumericLimits<char> {
-    static constexpr char min() { return -__SCHAR_MAX__ - 1; }
-    static constexpr char max() { return __SCHAR_MAX__; }
+struct NumericLimits<signed char> {
+    static constexpr signed char min() { return -__SCHAR_MAX__ - 1; }
+    static constexpr signed char max() { return __SCHAR_MAX__; }
     static constexpr bool is_signed() { return true; }
 };
 
@@ -111,6 +111,7 @@ struct NumericLimits<unsigned long long> {
     static constexpr bool is_signed() { return false; }
 };
 
+#ifndef KERNEL
 template<>
 struct NumericLimits<float> {
     static constexpr float min() { return __FLT_MIN__; }
@@ -131,6 +132,7 @@ struct NumericLimits<long double> {
     static constexpr long double max() { return __LDBL_MAX__; }
     static constexpr bool is_signed() { return true; }
 };
+#endif
 
 }
 

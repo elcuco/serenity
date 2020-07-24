@@ -29,9 +29,9 @@
 #include <Kernel/Devices/PATAChannel.h>
 #include <Kernel/Devices/PATADiskDevice.h>
 #include <Kernel/FileSystem/ProcFS.h>
+#include <Kernel/IO.h>
 #include <Kernel/Process.h>
 #include <Kernel/VM/MemoryManager.h>
-#include <LibBareMetal/IO.h>
 
 namespace Kernel {
 
@@ -177,15 +177,25 @@ static void print_ide_status(u8 status)
 
 void PATAChannel::wait_for_irq()
 {
-    Thread::current->wait_on(m_irq_queue);
+    Thread::current()->wait_on(m_irq_queue, "PATAChannel");
     disable_irq();
 }
 
 void PATAChannel::handle_irq(const RegisterState&)
 {
-    // FIXME: We might get random interrupts due to malfunctioning hardware, so we should check that we actually requested something to happen.
-
     u8 status = m_io_base.offset(ATA_REG_STATUS).in<u8>();
+
+    m_entropy_source.add_random_event(status);
+
+    u8 bstatus = m_bus_master_base.offset(2).in<u8>();
+    if (!(bstatus & 0x4)) {
+        // interrupt not from this device, ignore
+#ifdef PATA_DEBUG
+        klog() << "PATAChannel: ignore interrupt";
+#endif
+        return;
+    }
+
     if (status & ATA_SR_ERR) {
         print_ide_status(status);
         m_device_error = m_io_base.offset(ATA_REG_ERROR).in<u8>();
@@ -291,15 +301,11 @@ bool PATAChannel::ata_read_sectors_with_dma(u32 lba, u16 count, u8* outbuf, bool
     while (m_io_base.offset(ATA_REG_STATUS).in<u8>() & ATA_SR_BSY)
         ;
 
-    u8 devsel = 0xe0;
-    if (slave_request)
-        devsel |= 0x10;
-
     m_control_base.offset(ATA_CTL_CONTROL).out<u8>(0);
-    m_io_base.offset(ATA_REG_HDDEVSEL).out<u8>(devsel | (static_cast<u8>(slave_request) << 4));
+    m_io_base.offset(ATA_REG_HDDEVSEL).out<u8>(0x40 | (static_cast<u8>(slave_request) << 4));
     io_delay();
 
-    m_io_base.offset(ATA_REG_FEATURES).out<u8>(0);
+    m_io_base.offset(ATA_REG_FEATURES).out<u16>(0);
 
     m_io_base.offset(ATA_REG_SECCOUNT0).out<u8>(0);
     m_io_base.offset(ATA_REG_LBA0).out<u8>(0);
@@ -362,15 +368,11 @@ bool PATAChannel::ata_write_sectors_with_dma(u32 lba, u16 count, const u8* inbuf
     while (m_io_base.offset(ATA_REG_STATUS).in<u8>() & ATA_SR_BSY)
         ;
 
-    u8 devsel = 0xe0;
-    if (slave_request)
-        devsel |= 0x10;
-
     m_control_base.offset(ATA_CTL_CONTROL).out<u8>(0);
-    m_io_base.offset(ATA_REG_HDDEVSEL).out<u8>(devsel | (static_cast<u8>(slave_request) << 4));
+    m_io_base.offset(ATA_REG_HDDEVSEL).out<u8>(0x40 | (static_cast<u8>(slave_request) << 4));
     io_delay();
 
-    m_io_base.offset(ATA_REG_FEATURES).out<u8>(0);
+    m_io_base.offset(ATA_REG_FEATURES).out<u16>(0);
 
     m_io_base.offset(ATA_REG_SECCOUNT0).out<u8>(0);
     m_io_base.offset(ATA_REG_LBA0).out<u8>(0);
@@ -449,7 +451,8 @@ bool PATAChannel::ata_read_sectors(u32 lba, u16 count, u8* outbuf, bool slave_re
     m_io_base.offset(ATA_REG_COMMAND).out<u8>(ATA_CMD_READ_PIO);
 
     for (int i = 0; i < count; i++) {
-        prepare_for_irq();
+        if (i > 0)
+            prepare_for_irq();
         wait_for_irq();
         if (m_device_error)
             return false;

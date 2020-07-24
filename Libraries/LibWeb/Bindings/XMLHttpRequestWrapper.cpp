@@ -25,7 +25,6 @@
  */
 
 #include <AK/FlyString.h>
-#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibWeb/Bindings/WindowObject.h>
@@ -33,18 +32,17 @@
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
 #include <LibWeb/DOM/XMLHttpRequest.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
-XMLHttpRequestWrapper* wrap(JS::Heap& heap, XMLHttpRequest& impl)
+XMLHttpRequestWrapper* wrap(JS::GlobalObject& global_object, XMLHttpRequest& impl)
 {
-    return static_cast<XMLHttpRequestWrapper*>(wrap_impl(heap, impl));
+    return static_cast<XMLHttpRequestWrapper*>(wrap_impl(global_object, impl));
 }
 
-XMLHttpRequestWrapper::XMLHttpRequestWrapper(XMLHttpRequest& impl)
-    : EventTargetWrapper(impl)
+XMLHttpRequestWrapper::XMLHttpRequestWrapper(JS::GlobalObject& global_object, XMLHttpRequest& impl)
+    : EventTargetWrapper(global_object, impl)
 {
-    set_prototype(static_cast<WindowObject&>(interpreter().global_object()).xhr_prototype());
+    set_prototype(static_cast<WindowObject&>(global_object).xhr_prototype());
 }
 
 XMLHttpRequestWrapper::~XMLHttpRequestWrapper()
@@ -61,5 +59,4 @@ const XMLHttpRequest& XMLHttpRequestWrapper::impl() const
     return static_cast<const XMLHttpRequest&>(EventTargetWrapper::impl());
 }
 
-}
 }

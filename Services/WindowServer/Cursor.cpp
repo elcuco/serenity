@@ -29,7 +29,7 @@
 
 namespace WindowServer {
 
-Cursor::Cursor(NonnullRefPtr<Gfx::Bitmap>&& bitmap, const Gfx::Point& hotspot)
+Cursor::Cursor(NonnullRefPtr<Gfx::Bitmap>&& bitmap, const Gfx::IntPoint& hotspot)
     : m_bitmap(move(bitmap))
     , m_hotspot(hotspot)
 {
@@ -44,7 +44,7 @@ NonnullRefPtr<Cursor> Cursor::create(NonnullRefPtr<Gfx::Bitmap>&& bitmap)
     return adopt(*new Cursor(move(bitmap), bitmap->rect().center()));
 }
 
-NonnullRefPtr<Cursor> Cursor::create(NonnullRefPtr<Gfx::Bitmap>&& bitmap, const Gfx::Point& hotspot)
+NonnullRefPtr<Cursor> Cursor::create(NonnullRefPtr<Gfx::Bitmap>&& bitmap, const Gfx::IntPoint& hotspot)
 {
     return adopt(*new Cursor(move(bitmap), hotspot));
 }
@@ -66,10 +66,20 @@ RefPtr<Cursor> Cursor::create(StandardCursor standard_cursor)
         return WindowManager::the().resize_diagonally_tlbr_cursor();
     case StandardCursor::ResizeDiagonalBLTR:
         return WindowManager::the().resize_diagonally_bltr_cursor();
+    case StandardCursor::ResizeColumn:
+        return WindowManager::the().resize_column_cursor();
+    case StandardCursor::ResizeRow:
+        return WindowManager::the().resize_row_cursor();
     case StandardCursor::Hand:
         return WindowManager::the().hand_cursor();
+    case StandardCursor::Help:
+        return WindowManager::the().help_cursor();
     case StandardCursor::Drag:
         return WindowManager::the().drag_cursor();
+    case StandardCursor::Move:
+        return WindowManager::the().move_cursor();
+    case StandardCursor::Wait:
+        return WindowManager::the().wait_cursor();
     }
     ASSERT_NOT_REACHED();
 }

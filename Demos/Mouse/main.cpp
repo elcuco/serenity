@@ -114,10 +114,10 @@ public:
             auto off_x = 80;
             auto off_y = 38;
 
-            Gfx::Point p1;
-            Gfx::Point p2;
-            Gfx::Point p3;
-            Gfx::Point p4;
+            Gfx::IntPoint p1;
+            Gfx::IntPoint p2;
+            Gfx::IntPoint p3;
+            Gfx::IntPoint p4;
 
             p1.set_x(radius * cos(M_PI * m_wheel_delta_acc / 18) + off_x);
             p1.set_y(radius * sin(M_PI * m_wheel_delta_acc / 18) + off_y);
@@ -171,9 +171,10 @@ private:
 
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
     auto window = GUI::Window::construct();
     window->set_title("Mouse button demo");
+    window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/app-mouse.png"));
     window->resize(160, 155);
 
     auto& main_widget = window->set_main_widget<MainFrame>();
@@ -181,15 +182,15 @@ int main(int argc, char** argv)
 
     auto menubar = GUI::MenuBar::construct();
     auto& app_menu = menubar->add_menu("Mouse Demo");
-    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app.quit(); }));
+    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
 
     auto& help_menu = menubar->add_menu("Help");
     help_menu.add_action(GUI::Action::create("About", [&](auto&) {
         GUI::AboutDialog::show("Mouse Demo", Gfx::Bitmap::load_from_file("/res/icons/32x32/app-mouse.png"), window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
     window->set_resizable(false);
     window->show();
-    return app.exec();
+    return app->exec();
 }

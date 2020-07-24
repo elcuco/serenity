@@ -31,6 +31,13 @@
 
 namespace IPC {
 
+template<typename T>
+bool encode(BufferStream&, T&)
+{
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
 class Encoder {
 public:
     explicit Encoder(MessageBuffer& buffer)
@@ -51,7 +58,39 @@ public:
     Encoder& operator<<(const char*);
     Encoder& operator<<(const StringView&);
     Encoder& operator<<(const String&);
+    Encoder& operator<<(const URL&);
     Encoder& operator<<(const Dictionary&);
+
+    template<typename T>
+    Encoder& operator<<(const Vector<T>& vector)
+    {
+        *this << (u64)vector.size();
+        for (auto& value : vector)
+            *this << value;
+        return *this;
+    }
+
+    template<typename T>
+    Encoder& operator<<(const T& value)
+    {
+        encode(value);
+        return *this;
+    }
+
+    template<typename T>
+    Encoder& operator<<(const Optional<T>& optional)
+    {
+        *this << optional.has_value();
+        if (optional.has_value())
+            *this << optional.value();
+        return *this;
+    }
+
+    template<typename T>
+    void encode(const T& value)
+    {
+        IPC::encode(*this, value);
+    }
 
 private:
     MessageBuffer& m_buffer;

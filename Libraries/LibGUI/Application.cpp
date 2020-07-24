@@ -27,6 +27,7 @@
 #include <LibCore/EventLoop.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
+#include <LibGUI/Clipboard.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/MenuBar.h>
@@ -38,40 +39,40 @@
 
 namespace GUI {
 
-static Application* s_the;
+static WeakPtr<Application> s_the;
 
-Application& Application::the()
+Application* Application::the()
 {
-    ASSERT(s_the);
-    return *s_the;
+    return s_the;
 }
 
 Application::Application(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
     ASSERT(!s_the);
-    s_the = this;
+    s_the = make_weak_ptr();
     m_event_loop = make<Core::EventLoop>();
     WindowServerConnection::the();
+    Clipboard::initialize({});
     if (argc > 0)
         m_invoked_as = argv[0];
-    for (int i = 1; i < argc; i++)
-        m_args.append(argv[i]);
+    for (int i = 1; i < argc; i++) {
+        String arg(argv[i]);
+
+        if (arg == "--gui-focus-debug")
+            m_focus_debugging_enabled = true;
+
+        m_args.append(move(arg));
+    }
 }
 
 Application::~Application()
 {
-    s_the = nullptr;
+    revoke_weak_ptrs();
 }
 
 int Application::exec()
 {
-    int exit_code = m_event_loop->exec();
-    // NOTE: Maybe it would be cool to return instead of exit()?
-    //       This would require cleaning up all the Core::Objects on the heap.
-    exit(exit_code);
-    return exit_code;
+    return m_event_loop->exec();
 }
 
 void Application::quit(int exit_code)
@@ -133,7 +134,7 @@ private:
     RefPtr<Label> m_label;
 };
 
-void Application::show_tooltip(const StringView& tooltip, const Gfx::Point& screen_location)
+void Application::show_tooltip(const StringView& tooltip, const Gfx::IntPoint& screen_location)
 {
     if (!m_tooltip_window) {
         m_tooltip_window = TooltipWindow::construct();
@@ -141,10 +142,10 @@ void Application::show_tooltip(const StringView& tooltip, const Gfx::Point& scre
     }
     m_tooltip_window->set_tooltip(tooltip);
 
-    Gfx::Rect desktop_rect = Desktop::the().rect();
+    Gfx::IntRect desktop_rect = Desktop::the().rect();
 
     const int margin = 30;
-    Gfx::Point adjusted_pos = screen_location;
+    Gfx::IntPoint adjusted_pos = screen_location;
     if (adjusted_pos.x() + m_tooltip_window->width() >= desktop_rect.width() - margin) {
         adjusted_pos = adjusted_pos.translated(-m_tooltip_window->width(), 0);
     }

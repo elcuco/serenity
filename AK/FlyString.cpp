@@ -26,6 +26,7 @@
 
 #include <AK/FlyString.h>
 #include <AK/HashTable.h>
+#include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/StringUtils.h>
 #include <AK/StringView.h>
@@ -88,14 +89,24 @@ FlyString::FlyString(const char* string)
 {
 }
 
-int FlyString::to_int(bool& ok) const
+Optional<int> FlyString::to_int() const
 {
-    return StringUtils::convert_to_int(view(), ok);
+    return StringUtils::convert_to_int(view());
 }
 
 bool FlyString::equals_ignoring_case(const StringView& other) const
 {
     return StringUtils::equals_ignoring_case(view(), other);
+}
+
+bool FlyString::starts_with(const StringView& str, CaseSensitivity case_sensitivity) const
+{
+    return StringUtils::starts_with(view(), str, case_sensitivity);
+}
+
+bool FlyString::ends_with(const StringView& str, CaseSensitivity case_sensitivity) const
+{
+    return StringUtils::ends_with(view(), str, case_sensitivity);
 }
 
 FlyString FlyString::to_lowercase() const
@@ -108,16 +119,26 @@ StringView FlyString::view() const
     return { characters(), length() };
 }
 
-bool FlyString::operator==(const String& string) const
+bool FlyString::operator==(const String& other) const
 {
-    if (m_impl == string.impl())
+    if (m_impl == other.impl())
         return true;
-    return String(m_impl.ptr()) == string;
+
+    if (!m_impl)
+        return !other.impl();
+
+    if (!other.impl())
+        return false;
+
+    if (length() != other.length())
+        return false;
+
+    return !__builtin_memcmp(characters(), other.characters(), length());
 }
 
 bool FlyString::operator==(const StringView& string) const
 {
-    return String(string) == String(m_impl.ptr());
+    return *this == String(string);
 }
 
 bool FlyString::operator==(const char* string) const

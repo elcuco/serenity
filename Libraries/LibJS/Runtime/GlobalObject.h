@@ -27,11 +27,14 @@
 #pragma once
 
 #include <LibJS/Heap/Heap.h>
+#include <LibJS/Interpreter.h>
 #include <LibJS/Runtime/Object.h>
 
 namespace JS {
 
 class GlobalObject : public Object {
+    JS_OBJECT(GlobalObject, Object);
+
 public:
     explicit GlobalObject();
     virtual void initialize();
@@ -46,6 +49,11 @@ public:
     JS_ENUMERATE_BUILTIN_TYPES
 #undef __JS_ENUMERATE
 
+#define __JS_ENUMERATE(ClassName, snake_name) \
+    Object* snake_name##_prototype() { return m_##snake_name##_prototype; }
+    JS_ENUMERATE_ITERATOR_PROTOTYPES
+#undef __JS_ENUMERATE
+
 protected:
     virtual void visit_children(Visitor&) override;
 
@@ -53,11 +61,10 @@ protected:
     void add_constructor(const FlyString& property_name, ConstructorType*&, Object& prototype);
 
 private:
-    virtual const char* class_name() const override { return "GlobalObject"; }
-
-    static Value gc(Interpreter&);
-    static Value is_nan(Interpreter&);
-    static Value is_finite(Interpreter&);
+    JS_DECLARE_NATIVE_FUNCTION(gc);
+    JS_DECLARE_NATIVE_FUNCTION(is_nan);
+    JS_DECLARE_NATIVE_FUNCTION(is_finite);
+    JS_DECLARE_NATIVE_FUNCTION(parse_float);
 
     Shape* m_empty_object_shape { nullptr };
 
@@ -66,15 +73,25 @@ private:
     Object* m_##snake_name##_prototype { nullptr };
     JS_ENUMERATE_BUILTIN_TYPES
 #undef __JS_ENUMERATE
+
+#define __JS_ENUMERATE(ClassName, snake_name) \
+    Object* m_##snake_name##_prototype { nullptr };
+    JS_ENUMERATE_ITERATOR_PROTOTYPES
+#undef __JS_ENUMERATE
+
 };
 
 template<typename ConstructorType>
 inline void GlobalObject::add_constructor(const FlyString& property_name, ConstructorType*& constructor, Object& prototype)
 {
-    constructor = heap().allocate<ConstructorType>();
-    constructor->put("name", js_string(heap(), property_name), Attribute::Configurable);
-    prototype.put("constructor", constructor);
-    put(property_name, constructor, Attribute::Writable | Attribute::Configurable);
+    constructor = heap().allocate<ConstructorType>(*this, *this);
+    constructor->define_property("name", js_string(heap(), property_name), Attribute::Configurable);
+    if (interpreter().exception())
+        return;
+    prototype.define_property("constructor", constructor, Attribute::Writable | Attribute::Configurable);
+    if (interpreter().exception())
+        return;
+    define_property(property_name, constructor, Attribute::Writable | Attribute::Configurable);
 }
 
 }

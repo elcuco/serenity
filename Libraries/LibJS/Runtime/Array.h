@@ -30,23 +30,22 @@
 
 namespace JS {
 
-Array* array_from(Interpreter&);
-
 class Array final : public Object {
+    JS_OBJECT(Array, Object);
+
 public:
     static Array* create(GlobalObject&);
 
     explicit Array(Object& prototype);
     virtual ~Array() override;
 
-    i32 length() const { return static_cast<i32>(elements().size()); }
+    static Array* typed_this(Interpreter&, GlobalObject&);
 
 private:
-    virtual const char* class_name() const override { return "Array"; }
     virtual bool is_array() const override { return true; }
 
-    static Value length_getter(Interpreter&);
-    static void length_setter(Interpreter&, Value);
+    JS_DECLARE_NATIVE_GETTER(length_getter);
+    JS_DECLARE_NATIVE_SETTER(length_setter);
 };
 
 }

@@ -24,8 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "PowerDialog.h"
-#include <AK/FileSystemPath.h>
+#include "ShutdownDialog.h"
+#include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
 #include <LibCore/ConfigFile.h>
 #include <LibCore/DirIterator.h>
@@ -36,6 +36,7 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/WindowServerConnection.h>
 #include <LibGfx/Bitmap.h>
+#include <spawn.h>
 
 //#define SYSTEM_MENU_DEBUG
 
@@ -64,7 +65,8 @@ static NonnullRefPtr<GUI::Menu> build_system_menu();
 
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
+    app->set_quit_when_last_window_deleted(false);
 
     auto menu = build_system_menu();
     menu->realize_menu_if_needed();
@@ -93,7 +95,7 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
-    return app.exec();
+    return app->exec();
 }
 
 NonnullRefPtr<GUI::Menu> build_system_menu()
@@ -148,12 +150,11 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
         auto parent_menu = g_app_category_menus.get(app.category).value_or(*system_menu);
         parent_menu->add_action(GUI::Action::create(app.name, icon.ptr(), [app_identifier](auto&) {
             dbg() << "Activated app with ID " << app_identifier;
-            if (fork() == 0) {
-                const auto& bin = g_apps[app_identifier].executable;
-                if (execl(bin.characters(), bin.characters(), nullptr) < 0)
-                    perror("execl");
-                ASSERT_NOT_REACHED();
-            }
+            const auto& bin = g_apps[app_identifier].executable;
+            pid_t child_pid;
+            const char* argv[] = { bin.characters(), nullptr };
+            if ((errno = posix_spawn(&child_pid, bin.characters(), nullptr, nullptr, const_cast<char**>(argv), environ)))
+                perror("posix_spawn");
         }));
         ++app_identifier;
     }
@@ -170,7 +171,7 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
         while (dt.has_next()) {
             auto theme_name = dt.next_path();
             auto theme_path = String::format("/res/themes/%s", theme_name.characters());
-            g_themes.append({ FileSystemPath(theme_name).title(), theme_path });
+            g_themes.append({ LexicalPath(theme_name).title(), theme_path });
         }
         quick_sort(g_themes, [](auto& a, auto& b) { return a.name < b.name; });
     }
@@ -196,22 +197,19 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
 
     system_menu->add_separator();
     system_menu->add_action(GUI::Action::create("About...", Gfx::Bitmap::load_from_file("/res/icons/16x16/ladybug.png"), [](auto&) {
-        if (fork() == 0) {
-            execl("/bin/About", "/bin/About", nullptr);
-            ASSERT_NOT_REACHED();
-        }
+        pid_t child_pid;
+        const char* argv[] = { "/bin/About", nullptr };
+        posix_spawn(&child_pid, "/bin/About", nullptr, nullptr, const_cast<char**>(argv), environ);
     }));
     system_menu->add_separator();
     system_menu->add_action(GUI::Action::create("Exit...", [](auto&) {
-        Vector<char const*> command = PowerDialog::show();
+        auto command = ShutdownDialog::show();
 
         if (command.size() == 0)
             return;
 
-        if (fork() == 0) {
-            execv(command[0], const_cast<char* const*>(command.data()));
-            ASSERT_NOT_REACHED();
-        }
+        pid_t child_pid;
+        posix_spawn(&child_pid, command[0], nullptr, nullptr, const_cast<char**>(command.data()), environ);
     }));
 
     return system_menu;

@@ -29,7 +29,12 @@
 #include <AK/Assertions.h>
 #include <AK/Forward.h>
 #include <AK/LogStream.h>
+#include <AK/Types.h>
 #include <LibJS/Forward.h>
+#include <math.h>
+
+// 2 ** 53 - 1
+static constexpr double MAX_ARRAY_LIKE_INDEX = 9007199254740991.0;
 
 namespace JS {
 
@@ -43,6 +48,16 @@ public:
         String,
         Object,
         Boolean,
+        Symbol,
+        Accessor,
+        BigInt,
+        NativeProperty,
+    };
+
+    enum class PreferredType {
+        Default,
+        String,
+        Number,
     };
 
     bool is_empty() const { return m_type == Type::Empty; }
@@ -52,14 +67,20 @@ public:
     bool is_string() const { return m_type == Type::String; }
     bool is_object() const { return m_type == Type::Object; }
     bool is_boolean() const { return m_type == Type::Boolean; }
-    bool is_cell() const { return is_string() || is_object(); }
+    bool is_symbol() const { return m_type == Type::Symbol; }
+    bool is_accessor() const { return m_type == Type::Accessor; };
+    bool is_bigint() const { return m_type == Type::BigInt; };
+    bool is_native_property() const { return m_type == Type::NativeProperty; }
+    bool is_cell() const { return is_string() || is_accessor() || is_object() || is_bigint() || is_symbol() || is_native_property(); }
     bool is_array() const;
     bool is_function() const;
 
     bool is_nan() const { return is_number() && __builtin_isnan(as_double()); }
     bool is_infinity() const { return is_number() && __builtin_isinf(as_double()); }
-    bool is_positive_zero() const { return is_number() && 1.0 / as_double() == __builtin_huge_val(); }
-    bool is_negative_zero() const { return is_number() && 1.0 / as_double() == -__builtin_huge_val(); }
+    bool is_positive_infinity() const { return is_number() && __builtin_isinf_sign(as_double()) > 0; }
+    bool is_negative_infinity() const { return is_number() && __builtin_isinf_sign(as_double()) < 0; }
+    bool is_positive_zero() const { return is_number() && 1.0 / as_double() == INFINITY; }
+    bool is_negative_zero() const { return is_number() && 1.0 / as_double() == -INFINITY; }
     bool is_integer() const { return is_finite_number() && (i32)as_double() == as_double(); }
     bool is_finite_number() const
     {
@@ -110,6 +131,30 @@ public:
         m_value.as_string = string;
     }
 
+    Value(Symbol* symbol)
+        : m_type(Type::Symbol)
+    {
+        m_value.as_symbol = symbol;
+    }
+
+    Value(Accessor* accessor)
+        : m_type(Type::Accessor)
+    {
+        m_value.as_accessor = accessor;
+    }
+
+    Value(BigInt* bigint)
+        : m_type(Type::BigInt)
+    {
+        m_value.as_bigint = bigint;
+    }
+
+    Value(NativeProperty* native_property)
+        : m_type(Type::NativeProperty)
+    {
+        m_value.as_native_property = native_property;
+    }
+
     explicit Value(Type type)
         : m_type(type)
     {
@@ -153,23 +198,61 @@ public:
         return *m_value.as_string;
     }
 
+    Symbol& as_symbol()
+    {
+        ASSERT(is_symbol());
+        return *m_value.as_symbol;
+    }
+
+    const Symbol& as_symbol() const
+    {
+        ASSERT(is_symbol());
+        return *m_value.as_symbol;
+    }
+
     Cell* as_cell()
     {
         ASSERT(is_cell());
         return m_value.as_cell;
     }
 
+    Accessor& as_accessor()
+    {
+        ASSERT(is_accessor());
+        return *m_value.as_accessor;
+    }
+
+    BigInt& as_bigint()
+    {
+        ASSERT(is_bigint());
+        return *m_value.as_bigint;
+    }
+
+    NativeProperty& as_native_property()
+    {
+        ASSERT(is_native_property());
+        return *m_value.as_native_property;
+    }
+
+    Array& as_array();
     Function& as_function();
 
-    String to_string() const;
-    bool to_boolean() const;
-    Value to_number() const;
-    i32 to_i32() const;
-    double to_double() const;
-    size_t to_size_t() const;
-    Value to_primitive(Interpreter&) const;
+    i32 as_i32() const;
+    size_t as_size_t() const;
 
-    Object* to_object(Heap&) const;
+    String to_string(Interpreter&) const;
+    PrimitiveString* to_primitive_string(Interpreter&);
+    Value to_primitive(Interpreter&, PreferredType preferred_type = PreferredType::Default) const;
+    Object* to_object(Interpreter&, GlobalObject&) const;
+    Value to_numeric(Interpreter&) const;
+    Value to_number(Interpreter&) const;
+    BigInt* to_bigint(Interpreter&) const;
+    double to_double(Interpreter&) const;
+    i32 to_i32(Interpreter&) const;
+    size_t to_size_t(Interpreter&) const;
+    bool to_boolean() const;
+
+    String to_string_without_side_effects() const;
 
     Value value_or(Value fallback) const
     {
@@ -185,8 +268,12 @@ private:
         bool as_bool;
         double as_double;
         PrimitiveString* as_string;
+        Symbol* as_symbol;
         Object* as_object;
         Cell* as_cell;
+        Accessor* as_accessor;
+        BigInt* as_bigint;
+        NativeProperty* as_native_property;
     } m_value;
 };
 
@@ -202,17 +289,17 @@ inline Value js_null()
 
 inline Value js_nan()
 {
-    return Value(__builtin_nan(""));
+    return Value(NAN);
 }
 
 inline Value js_infinity()
 {
-    return Value(__builtin_huge_val());
+    return Value(INFINITY);
 }
 
 inline Value js_negative_infinity()
 {
-    return Value(-__builtin_huge_val());
+    return Value(-INFINITY);
 }
 
 Value greater_than(Interpreter&, Value lhs, Value rhs);
@@ -236,12 +323,15 @@ Value mod(Interpreter&, Value lhs, Value rhs);
 Value exp(Interpreter&, Value lhs, Value rhs);
 Value in(Interpreter&, Value lhs, Value rhs);
 Value instance_of(Interpreter&, Value lhs, Value rhs);
+Value ordinary_has_instance(Interpreter& interpreter, Value lhs, Value rhs);
 
 bool abstract_eq(Interpreter&, Value lhs, Value rhs);
 bool strict_eq(Interpreter&, Value lhs, Value rhs);
 bool same_value(Interpreter&, Value lhs, Value rhs);
 bool same_value_zero(Interpreter&, Value lhs, Value rhs);
 bool same_value_non_numeric(Interpreter&, Value lhs, Value rhs);
+TriState abstract_relation(Interpreter&, bool left_first, Value lhs, Value rhs);
+size_t length_of_array_like(Interpreter&, Value);
 
 const LogStream& operator<<(const LogStream&, const Value&);
 

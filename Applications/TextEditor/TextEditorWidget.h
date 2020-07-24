@@ -26,14 +26,15 @@
 
 #pragma once
 
-#include <AK/FileSystemPath.h>
 #include <AK/Function.h>
+#include <AK/LexicalPath.h>
 #include <LibGUI/ActionGroup.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
 #include <LibWeb/Forward.h>
+
 class TextEditorWidget final : public GUI::Widget {
     C_OBJECT(TextEditorWidget)
 public:
@@ -43,13 +44,22 @@ public:
 
     GUI::TextEditor& editor() { return *m_editor; }
 
-    void set_markdown_preview_enabled(bool);
+    enum class PreviewMode {
+        None,
+        Markdown,
+        HTML,
+    };
+
+    void set_preview_mode(PreviewMode);
+    void set_auto_detect_preview_mode(bool value) { m_auto_detect_preview_mode = value; }
 
 private:
     TextEditorWidget();
-    void set_path(const FileSystemPath& file);
+    void set_path(const LexicalPath& file);
     void update_title();
+    void update_preview();
     void update_markdown_preview();
+    void update_html_preview();
 
     virtual void drop_event(GUI::DropEvent&) override;
 
@@ -63,12 +73,17 @@ private:
     RefPtr<GUI::Action> m_save_as_action;
     RefPtr<GUI::Action> m_find_replace_action;
     RefPtr<GUI::Action> m_line_wrapping_setting_action;
-    RefPtr<GUI::Action> m_markdown_preview_action;
+
     RefPtr<GUI::Action> m_find_next_action;
     RefPtr<GUI::Action> m_find_previous_action;
     RefPtr<GUI::Action> m_replace_next_action;
     RefPtr<GUI::Action> m_replace_previous_action;
     RefPtr<GUI::Action> m_replace_all_action;
+
+    GUI::ActionGroup m_preview_actions;
+    RefPtr<GUI::Action> m_no_preview_action;
+    RefPtr<GUI::Action> m_markdown_preview_action;
+    RefPtr<GUI::Action> m_html_preview_action;
 
     RefPtr<GUI::StatusBar> m_statusbar;
 
@@ -89,9 +104,11 @@ private:
     RefPtr<GUI::Action> m_js_highlight;
     RefPtr<GUI::Action> m_ini_highlight;
 
-    RefPtr<Web::HtmlView> m_html_view;
+    RefPtr<Web::PageView> m_page_view;
 
     bool m_document_dirty { false };
     bool m_document_opening { false };
-    bool m_markdown_preview_enabled { false };
+    bool m_auto_detect_preview_mode { false };
+
+    PreviewMode m_preview_mode { PreviewMode::None };
 };

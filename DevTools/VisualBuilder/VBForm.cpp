@@ -88,7 +88,7 @@ void VBForm::insert_widget(VBWidgetType type)
 {
     auto* insertion_parent = single_selected_widget();
     auto widget = VBWidget::create(type, *this, insertion_parent);
-    Gfx::Point insertion_position = m_next_insertion_position;
+    Gfx::IntPoint insertion_position = m_next_insertion_position;
     if (insertion_parent)
         insertion_position.move_by(insertion_parent->gwidget()->window_relative_rect().location());
     widget->set_rect({ insertion_position, { m_grid_size * 10 + 1, m_grid_size * 5 + 1 } });
@@ -136,7 +136,7 @@ bool VBForm::is_selected(const VBWidget& widget) const
     return m_selected_widgets.contains(const_cast<VBWidget*>(&widget));
 }
 
-VBWidget* VBForm::widget_at(const Gfx::Point& position)
+VBWidget* VBForm::widget_at(const Gfx::IntPoint& position)
 {
     auto result = hit_test(position, GUI::Widget::ShouldRespectGreediness::No);
     if (!result.widget)
@@ -216,6 +216,8 @@ void VBForm::keydown_event(GUI::KeyEvent& event)
                     return;
                 widget.gwidget()->move_by(m_grid_size, 0);
             });
+            break;
+        default:
             break;
         }
         return;
@@ -352,7 +354,7 @@ void VBForm::mousemove_event(GUI::MouseEvent& event)
             if (widget.is_in_layout())
                 return;
             auto new_rect = widget.transform_origin_rect();
-            Gfx::Size minimum_size { 5, 5 };
+            Gfx::IntSize minimum_size { 5, 5 };
             new_rect.set_x(new_rect.x() + change_x);
             new_rect.set_y(new_rect.y() + change_y);
             new_rect.set_width(max(minimum_size.width(), new_rect.width() + change_w));
@@ -381,20 +383,21 @@ void VBForm::load_from_file(const String& path)
 {
     auto file = Core::File::construct(path);
     if (!file->open(Core::IODevice::ReadOnly)) {
-        GUI::MessageBox::show(String::format("Could not open '%s' for reading", path.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+        GUI::MessageBox::show(window(), String::format("Could not open '%s' for reading", path.characters()), "Error", GUI::MessageBox::Type::Error);
         return;
     }
 
     auto file_contents = file->read_all();
     auto form_json = JsonValue::from_string(file_contents);
+    ASSERT(form_json.has_value());
 
-    if (!form_json.is_object()) {
-        GUI::MessageBox::show(String::format("Could not parse '%s'", path.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+    if (!form_json.value().is_object()) {
+        GUI::MessageBox::show(window(), String::format("Could not parse '%s'", path.characters()), "Error", GUI::MessageBox::Type::Error);
         return;
     }
 
-    m_name = form_json.as_object().get("name").to_string();
-    auto widgets = form_json.as_object().get("widgets").as_array();
+    m_name = form_json.value().as_object().get("name").to_string();
+    auto widgets = form_json.value().as_object().get("widgets").as_array();
 
     widgets.for_each([&](const JsonValue& widget_value) {
         auto& widget_object = widget_value.as_object();
@@ -417,7 +420,7 @@ void VBForm::write_to_file(const String& path)
 {
     auto file = Core::File::construct(path);
     if (!file->open(Core::IODevice::WriteOnly)) {
-        GUI::MessageBox::show(String::format("Could not open '%s' for writing", path.characters()), "Error", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+        GUI::MessageBox::show(window(), String::format("Could not open '%s' for writing", path.characters()), "Error", GUI::MessageBox::Type::Error);
         return;
     }
 

@@ -107,9 +107,6 @@ void AbstractButton::mousemove_event(MouseEvent& event)
 
 void AbstractButton::mousedown_event(MouseEvent& event)
 {
-#ifdef GABSTRACTBUTTON_DEBUG
-    dbgprintf("AbstractButton::mouse_down_event: x=%d, y=%d, button=%u\n", event.x(), event.y(), (unsigned)event.button());
-#endif
     if (event.button() == MouseButton::Left) {
         m_being_pressed = true;
         update();
@@ -124,9 +121,6 @@ void AbstractButton::mousedown_event(MouseEvent& event)
 
 void AbstractButton::mouseup_event(MouseEvent& event)
 {
-#ifdef GABSTRACTBUTTON_DEBUG
-    dbgprintf("AbstractButton::mouse_up_event: x=%d, y=%d, button=%u\n", event.x(), event.y(), (unsigned)event.button());
-#endif
     if (event.button() == MouseButton::Left) {
         bool was_auto_repeating = m_auto_repeat_timer->is_active();
         m_auto_repeat_timer->stop();
@@ -134,7 +128,7 @@ void AbstractButton::mouseup_event(MouseEvent& event)
         m_being_pressed = false;
         update();
         if (was_being_pressed && !was_auto_repeating)
-            click();
+            click(event.modifiers());
     }
     Widget::mouseup_event(event);
 }
@@ -154,14 +148,14 @@ void AbstractButton::leave_event(Core::Event&)
 void AbstractButton::keydown_event(KeyEvent& event)
 {
     if (event.key() == KeyCode::Key_Return) {
-        click();
+        click(event.modifiers());
         event.accept();
         return;
     }
     Widget::keydown_event(event);
 }
 
-void AbstractButton::paint_text(Painter& painter, const Gfx::Rect& rect, const Gfx::Font& font, Gfx::TextAlignment text_alignment)
+void AbstractButton::paint_text(Painter& painter, const Gfx::IntRect& rect, const Gfx::Font& font, Gfx::TextAlignment text_alignment)
 {
     auto clipped_rect = rect.intersected(this->rect());
 

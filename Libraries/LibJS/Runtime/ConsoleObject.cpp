@@ -35,65 +35,70 @@
 
 namespace JS {
 
-ConsoleObject::ConsoleObject()
-    : Object(interpreter().global_object().object_prototype())
+ConsoleObject::ConsoleObject(GlobalObject& global_object)
+    : Object(*global_object.object_prototype())
 {
-    put_native_function("log", log);
-    put_native_function("debug", debug);
-    put_native_function("info", info);
-    put_native_function("warn", warn);
-    put_native_function("error", error);
-    put_native_function("trace", trace);
-    put_native_function("count", count);
-    put_native_function("countReset", count_reset);
-    put_native_function("clear", clear);
+}
+
+void ConsoleObject::initialize(GlobalObject& global_object)
+{
+    Object::initialize(global_object);
+    define_native_function("log", log);
+    define_native_function("debug", debug);
+    define_native_function("info", info);
+    define_native_function("warn", warn);
+    define_native_function("error", error);
+    define_native_function("trace", trace);
+    define_native_function("count", count);
+    define_native_function("countReset", count_reset);
+    define_native_function("clear", clear);
 }
 
 ConsoleObject::~ConsoleObject()
 {
 }
 
-Value ConsoleObject::log(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::log)
 {
     return interpreter.console().log();
 }
 
-Value ConsoleObject::debug(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::debug)
 {
     return interpreter.console().debug();
 }
 
-Value ConsoleObject::info(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::info)
 {
     return interpreter.console().info();
 }
 
-Value ConsoleObject::warn(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::warn)
 {
     return interpreter.console().warn();
 }
 
-Value ConsoleObject::error(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::error)
 {
     return interpreter.console().error();
 }
 
-Value ConsoleObject::trace(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::trace)
 {
     return interpreter.console().trace();
 }
 
-Value ConsoleObject::count(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::count)
 {
     return interpreter.console().count();
 }
 
-Value ConsoleObject::count_reset(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::count_reset)
 {
     return interpreter.console().count_reset();
 }
 
-Value ConsoleObject::clear(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ConsoleObject::clear)
 {
     return interpreter.console().clear();
 }

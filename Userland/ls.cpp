@@ -28,10 +28,12 @@
 #include <AK/QuickSort.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/DirIterator.h>
+#include <LibCore/File.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -48,7 +50,7 @@
 static int do_file_system_object_long(const char* path);
 static int do_file_system_object_short(const char* path);
 
-static bool flag_colorize = true;
+static bool flag_colorize = false;
 static bool flag_long = false;
 static bool flag_show_dotfiles = false;
 static bool flag_show_inode = false;
@@ -78,6 +80,11 @@ int main(int argc, char** argv)
         terminal_rows = ws.ws_row;
         terminal_columns = ws.ws_col;
         output_is_terminal = true;
+    }
+    if (!isatty(STDOUT_FILENO)) {
+        flag_disable_hyperlinks = true;
+    } else {
+        flag_colorize = true;
     }
 
     if (pledge("stdio rpath", nullptr) < 0) {
@@ -133,6 +140,12 @@ int main(int argc, char** argv)
 int print_escaped(const char* name)
 {
     int printed = 0;
+
+    Utf8View utf8_name(name);
+    if (utf8_name.validate()) {
+        printf("%s", name);
+        return utf8_name.length_in_codepoints();
+    }
 
     for (int i = 0; name[i] != '\0'; i++) {
         if (isprint(name[i])) {
@@ -196,13 +209,11 @@ size_t print_name(const struct stat& st, const String& name, const char* path_fo
     }
     if (S_ISLNK(st.st_mode)) {
         if (path_for_link_resolution) {
-            char linkbuf[PATH_MAX];
-            ssize_t nread = readlink(path_for_link_resolution, linkbuf, sizeof(linkbuf) - 1);
-            if (nread < 0) {
-                perror("readlink failed");
+            auto link_destination = Core::File::read_link(path_for_link_resolution);
+            if (link_destination.is_null()) {
+                perror("readlink");
             } else {
-                linkbuf[nread] = '\0';
-                nprinted += printf(" -> ") + print_escaped(linkbuf);
+                nprinted += printf(" -> ") + print_escaped(link_destination.characters());
             }
         } else {
             nprinted += printf("@");
@@ -293,10 +304,9 @@ bool print_filesystem_object(const String& path, const String& name, const struc
         printf("  %4u,%4u ", major(st.st_rdev), minor(st.st_rdev));
     } else {
         if (flag_human_readable) {
-            ASSERT(st.st_size > 0);
             printf(" %10s ", human_readable_size((size_t)st.st_size).characters());
         } else {
-            printf(" %10u ", st.st_size);
+            printf(" %10zd ", st.st_size);
         }
     }
 

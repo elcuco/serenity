@@ -24,6 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#pragma once
+
 #include <LibGUI/Widget.h>
 #include <LibWeb/Forward.h>
 
@@ -39,7 +41,10 @@ public:
 private:
     InspectorWidget();
 
+    void set_inspected_node(Web::Node*);
+
     RefPtr<GUI::TreeView> m_dom_tree_view;
+    RefPtr<GUI::TreeView> m_layout_tree_view;
     RefPtr<GUI::TableView> m_style_table_view;
     RefPtr<GUI::TableView> m_computed_style_table_view;
     RefPtr<Web::Document> m_document;

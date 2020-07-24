@@ -28,12 +28,15 @@
 #include <LibHTTP/HttpResponse.h>
 #include <ProtocolServer/HttpDownload.h>
 
-HttpDownload::HttpDownload(PSClientConnection& client, NonnullRefPtr<HTTP::HttpJob>&& job)
+namespace ProtocolServer {
+
+HttpDownload::HttpDownload(ClientConnection& client, NonnullRefPtr<HTTP::HttpJob> job)
     : Download(client)
     , m_job(job)
 {
     m_job->on_finish = [this](bool success) {
         if (auto* response = m_job->response()) {
+            set_status_code(response->code());
             set_payload(response->payload());
             set_response_headers(response->headers());
         }
@@ -52,9 +55,14 @@ HttpDownload::HttpDownload(PSClientConnection& client, NonnullRefPtr<HTTP::HttpJ
 
 HttpDownload::~HttpDownload()
 {
+    m_job->on_finish = nullptr;
+    m_job->on_progress = nullptr;
+    m_job->shutdown();
 }
 
-NonnullRefPtr<HttpDownload> HttpDownload::create_with_job(Badge<HttpProtocol>, PSClientConnection& client, NonnullRefPtr<HTTP::HttpJob>&& job)
+NonnullOwnPtr<HttpDownload> HttpDownload::create_with_job(Badge<HttpProtocol>, ClientConnection& client, NonnullRefPtr<HTTP::HttpJob> job)
 {
-    return adopt(*new HttpDownload(client, move(job)));
+    return adopt_own(*new HttpDownload(client, move(job)));
+}
+
 }

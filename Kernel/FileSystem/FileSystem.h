@@ -56,7 +56,7 @@ public:
 
     virtual bool initialize() = 0;
     virtual const char* class_name() const = 0;
-    virtual InodeIdentifier root_inode() const = 0;
+    virtual NonnullRefPtr<Inode> root_inode() const = 0;
     virtual bool supports_watchers() const { return false; }
 
     bool is_readonly() const { return m_readonly; }
@@ -78,27 +78,22 @@ public:
         u8 file_type { 0 };
     };
 
-    virtual KResultOr<NonnullRefPtr<Inode>> create_inode(InodeIdentifier parent_id, const String& name, mode_t, off_t size, dev_t, uid_t, gid_t) = 0;
-    virtual KResult create_directory(InodeIdentifier parent_inode, const String& name, mode_t, uid_t, gid_t) = 0;
+    virtual void flush_writes() { }
 
-    virtual RefPtr<Inode> get_inode(InodeIdentifier) const = 0;
-
-    virtual void flush_writes() {}
-
-    int block_size() const { return m_block_size; }
+    size_t block_size() const { return m_block_size; }
 
     virtual bool is_file_backed() const { return false; }
 
 protected:
     FS();
 
-    void set_block_size(int);
+    void set_block_size(size_t);
 
     mutable Lock m_lock { "FS" };
 
 private:
     unsigned m_fsid { 0 };
-    int m_block_size { 0 };
+    size_t m_block_size { 0 };
     bool m_readonly { false };
 };
 
@@ -110,11 +105,6 @@ inline FS* InodeIdentifier::fs()
 inline const FS* InodeIdentifier::fs() const
 {
     return FS::from_fsid(m_fsid);
-}
-
-inline bool InodeIdentifier::is_root_inode() const
-{
-    return (*this) == fs()->root_inode();
 }
 
 }

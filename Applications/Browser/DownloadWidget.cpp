@@ -30,14 +30,16 @@
 #include <AK/StringBuilder.h>
 #include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
+#include <LibDesktop/Launcher.h>
 #include <LibGUI/BoxLayout.h>
-#include <LibGUI/MessageBox.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
+#include <LibGUI/MessageBox.h>
 #include <LibGUI/ProgressBar.h>
 #include <LibGUI/Window.h>
 #include <LibProtocol/Client.h>
-#include <LibWeb/ResourceLoader.h>
+#include <LibWeb/Loader/ResourceLoader.h>
 #include <math.h>
 
 namespace Browser {
@@ -59,7 +61,7 @@ DownloadWidget::DownloadWidget(const URL& url)
     m_download->on_progress = [this](Optional<u32> total_size, u32 downloaded_size) {
         did_progress(total_size.value(), downloaded_size);
     };
-    m_download->on_finish = [this](bool success, auto& payload, auto payload_storage, auto& response_headers) {
+    m_download->on_finish = [this](bool success, auto& payload, auto payload_storage, auto& response_headers, auto) {
         did_finish(success, payload, payload_storage, response_headers);
     };
 
@@ -71,15 +73,11 @@ DownloadWidget::DownloadWidget(const URL& url)
     animation_container.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
     animation_container.set_preferred_size(0, 32);
     auto& animation_layout = animation_container.set_layout<GUI::HorizontalBoxLayout>();
-    auto& browser_icon_label = animation_container.add<GUI::Label>();
-    browser_icon_label.set_icon(Gfx::Bitmap::load_from_file("/res/icons/32x32/app-browser.png"));
-    browser_icon_label.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
-    browser_icon_label.set_preferred_size(32, 32);
+
+    auto& browser_image = animation_container.add<GUI::ImageWidget>();
+    browser_image.load_from_file("/res/download-animation.gif");
     animation_layout.add_spacer();
-    auto& folder_icon_label = animation_container.add<GUI::Label>();
-    folder_icon_label.set_icon(Gfx::Bitmap::load_from_file("/res/icons/32x32/filetype-folder.png"));
-    folder_icon_label.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
-    folder_icon_label.set_preferred_size(32, 32);
+
 
     auto& source_label = add<GUI::Label>(String::format("From: %s", url.to_string().characters()));
     source_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
@@ -106,7 +104,7 @@ DownloadWidget::DownloadWidget(const URL& url)
     m_cancel_button = button_container.add<GUI::Button>("Cancel");
     m_cancel_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_cancel_button->set_preferred_size(100, 22);
-    m_cancel_button->on_click = [this] {
+    m_cancel_button->on_click = [this](auto) {
         bool success = m_download->stop();
         ASSERT(success);
         window()->close();
@@ -116,7 +114,7 @@ DownloadWidget::DownloadWidget(const URL& url)
     m_close_button->set_enabled(false);
     m_close_button->set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
     m_close_button->set_preferred_size(100, 22);
-    m_close_button->on_click = [this] {
+    m_close_button->on_click = [this](auto) {
         window()->close();
     };
 }
@@ -128,10 +126,13 @@ DownloadWidget::~DownloadWidget()
 void DownloadWidget::did_progress(Optional<u32> total_size, u32 downloaded_size)
 {
     m_progress_bar->set_min(0);
-    if (total_size.has_value())
+    if (total_size.has_value()) {
+        int percent = roundf(((float)downloaded_size / (float)total_size.value()) * 100.0f);
+        window()->set_progress(percent);
         m_progress_bar->set_max(total_size.value());
-    else
+    } else {
         m_progress_bar->set_max(0);
+    }
     m_progress_bar->set_value(downloaded_size);
 
     {
@@ -162,18 +163,24 @@ void DownloadWidget::did_finish(bool success, const ByteBuffer& payload, RefPtr<
     (void)payload_storage;
     (void)response_headers;
     dbg() << "did_finish, success=" << success;
-    m_cancel_button->set_enabled(false);
+
     m_close_button->set_enabled(true);
+    m_cancel_button->set_text("Open in Folder");
+    m_cancel_button->on_click = [this](auto) {
+        Desktop::Launcher::open(URL::create_with_file_protocol(Core::StandardPaths::downloads_directory()));
+        window()->close();
+    };
+    m_cancel_button->update();
 
     if (!success) {
-        GUI::MessageBox::show(String::format("Download failed for some reason"), "Download failed", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+        GUI::MessageBox::show(window(), String::format("Download failed for some reason"), "Download failed", GUI::MessageBox::Type::Error);
         window()->close();
         return;
     }
 
     auto file_or_error = Core::File::open(m_destination_path, Core::IODevice::WriteOnly);
     if (file_or_error.is_error()) {
-        GUI::MessageBox::show(String::format("Cannot open %s for writing", m_destination_path.characters()), "Download failed", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, window());
+        GUI::MessageBox::show(window(), String::format("Cannot open %s for writing", m_destination_path.characters()), "Download failed", GUI::MessageBox::Type::Error);
         window()->close();
         return;
     }

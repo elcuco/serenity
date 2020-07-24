@@ -26,7 +26,6 @@
 
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
-#include <Kernel/KeyCode.h>
 #include <LibGUI/AbstractView.h>
 #include <LibGUI/DragOperation.h>
 #include <LibGUI/Model.h>
@@ -66,10 +65,35 @@ void AbstractView::did_update_model(unsigned flags)
     m_edit_index = {};
     m_hovered_index = {};
     if (!model() || (flags & GUI::Model::InvalidateAllIndexes)) {
-        selection().clear();
+        clear_selection();
     } else {
         selection().remove_matching([this](auto& index) { return !model()->is_valid(index); });
     }
+}
+
+void AbstractView::clear_selection()
+{
+    m_selection.clear();
+}
+
+void AbstractView::set_selection(const ModelIndex& new_index)
+{
+    m_selection.set(new_index);
+}
+
+void AbstractView::add_selection(const ModelIndex& new_index)
+{
+    m_selection.add(new_index);
+}
+
+void AbstractView::remove_selection(const ModelIndex& new_index)
+{
+    m_selection.remove(new_index);
+}
+
+void AbstractView::toggle_selection(const ModelIndex& new_index)
+{
+    m_selection.toggle(new_index);
 }
 
 void AbstractView::did_update_selection()
@@ -166,9 +190,6 @@ NonnullRefPtr<Gfx::Font> AbstractView::font_for_index(const ModelIndex& index) c
     if (font_data.is_font())
         return font_data.as_font();
 
-    auto column_metadata = model()->column_metadata(index.column());
-    if (column_metadata.font)
-        return *column_metadata.font;
     return font();
 }
 
@@ -186,14 +207,14 @@ void AbstractView::mousedown_event(MouseEvent& event)
     m_might_drag = false;
 
     if (!index.is_valid()) {
-        m_selection.clear();
+        clear_selection();
     } else if (event.modifiers() & Mod_Ctrl) {
-        m_selection.toggle(index);
+        toggle_selection(index);
     } else if (event.button() == MouseButton::Left && m_selection.contains(index) && !m_model->drag_data_type().is_null()) {
         // We might be starting a drag, so don't throw away other selected items yet.
         m_might_drag = true;
     } else {
-        m_selection.set(index);
+        set_selection(index);
     }
 
     update();
@@ -204,6 +225,16 @@ void AbstractView::set_hovered_index(const ModelIndex& index)
     if (m_hovered_index == index)
         return;
     m_hovered_index = index;
+    if (m_hovered_index.is_valid())
+        m_last_valid_hovered_index = m_hovered_index;
+    update();
+}
+
+void AbstractView::set_last_valid_hovered_index(const ModelIndex& index)
+{
+    if (m_last_valid_hovered_index == index)
+        return;
+    m_last_valid_hovered_index = index;
     update();
 }
 
@@ -298,12 +329,15 @@ void AbstractView::mouseup_event(MouseEvent& event)
         // Since we're here, it was not that; so fix up the selection now.
         auto index = index_at_event_position(event.position());
         if (index.is_valid())
-            m_selection.set(index);
+            set_selection(index);
         else
-            m_selection.clear();
+            clear_selection();
         m_might_drag = false;
         update();
     }
+
+    if (activates_on_selection())
+        activate_selected();
 }
 
 void AbstractView::doubleclick_event(MouseEvent& event)
@@ -319,9 +353,9 @@ void AbstractView::doubleclick_event(MouseEvent& event)
     auto index = index_at_event_position(event.position());
 
     if (!index.is_valid())
-        m_selection.clear();
+        clear_selection();
     else if (!m_selection.contains(index))
-        m_selection.set(index);
+        set_selection(index);
 
     activate_selected();
 }
@@ -334,9 +368,9 @@ void AbstractView::context_menu_event(ContextMenuEvent& event)
     auto index = index_at_event_position(event.position());
 
     if (index.is_valid())
-        m_selection.add(index);
+        add_selection(index);
     else
-        selection().clear();
+        clear_selection();
 
     if (on_context_menu_request)
         on_context_menu_request(index, event);
@@ -352,6 +386,18 @@ void AbstractView::drop_event(DropEvent& event)
     auto index = index_at_event_position(event.position());
     if (on_drop)
         on_drop(index, event);
+}
+
+void AbstractView::set_multi_select(bool multi_select)
+{
+    if (m_multi_select == multi_select)
+        return;
+    m_multi_select = multi_select;
+    if (!multi_select && m_selection.size() > 1) {
+        auto first_selected = m_selection.first();
+        m_selection.clear();
+        m_selection.set(first_selected);
+    }
 }
 
 }

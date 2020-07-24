@@ -38,7 +38,7 @@ class HTMLCanvasElement : public HTMLElement {
 public:
     using WrapperType = Bindings::HTMLCanvasElementWrapper;
 
-    HTMLCanvasElement(Document&, const FlyString& tag_name);
+    HTMLCanvasElement(Document&, const FlyString& local_name);
     virtual ~HTMLCanvasElement() override;
 
     const Gfx::Bitmap* bitmap() const { return m_bitmap; }
@@ -47,11 +47,11 @@ public:
 
     CanvasRenderingContext2D* get_context(String type);
 
-    int requested_width() const;
-    int requested_height() const;
+    unsigned width() const;
+    unsigned height() const;
 
 private:
-    virtual RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) const override;
+    virtual RefPtr<LayoutNode> create_layout_node(const StyleProperties* parent_style) override;
 
     RefPtr<Gfx::Bitmap> m_bitmap;
     RefPtr<CanvasRenderingContext2D> m_context;
@@ -60,7 +60,7 @@ private:
 template<>
 inline bool is<HTMLCanvasElement>(const Node& node)
 {
-    return is<Element>(node) && to<Element>(node).tag_name().equals_ignoring_case("canvas");
+    return is<Element>(node) && to<Element>(node).local_name() == HTML::TagNames::canvas;
 }
 
 }

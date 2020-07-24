@@ -115,7 +115,7 @@ static void load_kernel_sybols_from_data(const ByteBuffer& buffer)
     g_kernel_symbols_available = true;
 }
 
-NEVER_INLINE void dump_backtrace_impl(u32 ebp, bool use_ksyms)
+NEVER_INLINE void dump_backtrace_impl(FlatPtr base_pointer, bool use_ksyms)
 {
     SmapDisabler disabler;
 #if 0
@@ -125,13 +125,14 @@ NEVER_INLINE void dump_backtrace_impl(u32 ebp, bool use_ksyms)
     }
 #endif
     if (use_ksyms && !g_kernel_symbols_available) {
-        hang();
+        Processor::halt();
         return;
     }
 
     OwnPtr<Process::ELFBundle> elf_bundle;
-    if (Process::current)
-        elf_bundle = Process::current->elf_bundle();
+    auto current_process = Process::current();
+    if (current_process)
+        elf_bundle = current_process->elf_bundle();
 
     struct RecognizedSymbol {
         FlatPtr address;
@@ -141,14 +142,14 @@ NEVER_INLINE void dump_backtrace_impl(u32 ebp, bool use_ksyms)
     RecognizedSymbol recognized_symbols[max_recognized_symbol_count];
     size_t recognized_symbol_count = 0;
     if (use_ksyms) {
-        for (FlatPtr* stack_ptr = (FlatPtr*)ebp;
-             (Process::current ? Process::current->validate_read_from_kernel(VirtualAddress(stack_ptr), sizeof(void*) * 2) : 1) && recognized_symbol_count < max_recognized_symbol_count; stack_ptr = (u32*)*stack_ptr) {
+        for (FlatPtr* stack_ptr = (FlatPtr*)base_pointer;
+             (current_process ? current_process->validate_read_from_kernel(VirtualAddress(stack_ptr), sizeof(void*) * 2) : 1) && recognized_symbol_count < max_recognized_symbol_count; stack_ptr = (FlatPtr*)*stack_ptr) {
             FlatPtr retaddr = stack_ptr[1];
             recognized_symbols[recognized_symbol_count++] = { retaddr, symbolicate_kernel_address(retaddr) };
         }
     } else {
-        for (FlatPtr* stack_ptr = (FlatPtr*)ebp;
-             (Process::current ? Process::current->validate_read_from_kernel(VirtualAddress(stack_ptr), sizeof(void*) * 2) : 1); stack_ptr = (u32*)*stack_ptr) {
+        for (FlatPtr* stack_ptr = (FlatPtr*)base_pointer;
+             (current_process ? current_process->validate_read_from_kernel(VirtualAddress(stack_ptr), sizeof(void*) * 2) : 1); stack_ptr = (FlatPtr*)*stack_ptr) {
             FlatPtr retaddr = stack_ptr[1];
             dbg() << String::format("%x", retaddr) << " (next: " << String::format("%x", (stack_ptr ? (u32*)*stack_ptr : 0)) << ")";
         }
@@ -194,8 +195,8 @@ void load_kernel_symbol_table()
     ASSERT(!result.is_error());
     auto description = result.value();
     auto buffer = description->read_entire_file();
-    ASSERT(buffer);
-    load_kernel_sybols_from_data(buffer);
+    ASSERT(!buffer.is_error());
+    load_kernel_sybols_from_data(buffer.value());
 }
 
 }

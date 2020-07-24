@@ -26,7 +26,7 @@
 
 #include <Kernel/Net/E1000NetworkAdapter.h>
 #include <Kernel/Thread.h>
-#include <LibBareMetal/IO.h>
+#include <Kernel/IO.h>
 
 //#define E1000_DEBUG
 
@@ -204,6 +204,9 @@ void E1000NetworkAdapter::handle_irq(const RegisterState&)
     out32(REG_INTERRUPT_MASK_CLEAR, 0xffffffff);
 
     u32 status = in32(REG_INTERRUPT_CAUSE_READ);
+
+    m_entropy_source.add_random_event(status);
+
     if (status & 4) {
         u32 flags = in32(REG_CTRL);
         out32(REG_CTRL, flags | ECTRL_SLU);
@@ -223,7 +226,7 @@ void E1000NetworkAdapter::handle_irq(const RegisterState&)
 void E1000NetworkAdapter::detect_eeprom()
 {
     out32(REG_EEPROM, 0x1);
-    for (volatile int i = 0; i < 999; ++i) {
+    for (int i = 0; i < 999; ++i) {
         u32 data = in32(REG_EEPROM);
         if (data & 0x10) {
             m_has_eeprom = true;
@@ -413,7 +416,7 @@ void E1000NetworkAdapter::send_raw(const u8* data, size_t length)
             sti();
             break;
         }
-        Thread::current->wait_on(m_wait_queue);
+        Thread::current()->wait_on(m_wait_queue, "E1000NetworkAdapter");
     }
 #ifdef E1000_DEBUG
     klog() << "E1000: Sent packet, status is now " << String::format("%b", descriptor.status) << "!";

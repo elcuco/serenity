@@ -35,14 +35,14 @@ class MonitorWidget final : public GUI::Widget {
 public:
     MonitorWidget();
 
-    void set_wallpaper(String path);
+    bool set_wallpaper(String path);
     String wallpaper();
 
     void set_wallpaper_mode(String mode);
     String wallpaper_mode();
 
-    void set_desktop_resolution(Gfx::Size resolution);
-    Gfx::Size desktop_resolution();
+    void set_desktop_resolution(Gfx::IntSize resolution);
+    Gfx::IntSize desktop_resolution();
 
     void set_background_color(Gfx::Color background_color);
     Gfx::Color background_color();
@@ -50,12 +50,12 @@ public:
 private:
     virtual void paint_event(GUI::PaintEvent& event) override;
 
-    Gfx::Rect m_monitor_rect;
+    Gfx::IntRect m_monitor_rect;
     RefPtr<Gfx::Bitmap> m_monitor_bitmap;
 
     String m_desktop_wallpaper_path;
     RefPtr<Gfx::Bitmap> m_desktop_wallpaper_bitmap;
     String m_desktop_wallpaper_mode;
-    Gfx::Size m_desktop_resolution;
+    Gfx::IntSize m_desktop_resolution;
     Gfx::Color m_desktop_color;
 };

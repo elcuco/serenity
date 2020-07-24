@@ -32,6 +32,7 @@
 #include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
+#include <LibGUI/Desktop.h>
 #include <LibGUI/FilePicker.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/Menu.h>
@@ -42,19 +43,21 @@
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Palette.h>
+#include <LibGfx/Rect.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <string.h>
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio shared_buffer accept cpath rpath unix cpath fattr proc exec thread", nullptr) < 0) {
+    if (pledge("stdio shared_buffer accept cpath rpath wpath unix cpath fattr proc exec thread", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio shared_buffer accept cpath rpath proc exec thread", nullptr) < 0) {
+    if (pledge("stdio shared_buffer accept cpath rpath wpath proc exec thread", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -68,6 +71,7 @@ int main(int argc, char** argv)
     window->set_double_buffering_enabled(true);
     window->set_rect(200, 200, 300, 200);
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-image.png"));
+    window->set_title("QuickShow");
 
     auto& root_widget = window->set_main_widget<GUI::Widget>();
     root_widget.set_fill_with_background_color(true);
@@ -78,11 +82,23 @@ int main(int argc, char** argv)
     auto& main_toolbar = toolbar_container.add<GUI::ToolBar>();
 
     auto& widget = root_widget.add<QSWidget>();
-    widget.on_scale_change = [&](int scale) {
-        if (widget.bitmap())
-            window->set_title(String::format("%s %s %d%% - QuickShow", widget.path().characters(), widget.bitmap()->size().to_string().characters(), scale));
-        else
+    widget.on_scale_change = [&](int scale, Gfx::IntRect rect) {
+        if (!widget.bitmap()) {
             window->set_title("QuickShow");
+            return;
+        }
+
+        window->set_title(String::format("%s %s %d%% - QuickShow", widget.path().characters(), widget.bitmap()->size().to_string().characters(), scale));
+
+        if (window->is_fullscreen())
+            return;
+
+        if (window->is_maximized())
+            return;
+
+        auto w = max(window->width(), rect.width() + 4);
+        auto h = max(window->height(), rect.height() + widget.toolbar_height() + 6);
+        window->resize(w, h);
     };
     widget.on_drop = [&](auto& event) {
         window->move_to_front();
@@ -95,19 +111,22 @@ int main(int argc, char** argv)
                 widget.load_from_file(url.path());
             }
 
+            pid_t child;
             for (size_t i = 1; i < urls.size(); ++i) {
-                if (fork() == 0) {
-                    execl("/bin/QuickShow", "/bin/QuickShow", urls[i].path().characters(), nullptr);
-                    ASSERT_NOT_REACHED();
-                }
+                const char* argv[] = { "/bin/QuickShow", urls[i].path().characters(), nullptr };
+                posix_spawn(&child, "/bin/QuickShow", nullptr, nullptr, const_cast<char**>(argv), environ);
             }
         }
+    };
+    widget.on_doubleclick = [&] {
+        window->set_fullscreen(!window->is_fullscreen());
+        toolbar_container.set_visible(!window->is_fullscreen());
     };
 
     // Actions
     auto open_action = GUI::CommonActions::make_open_action(
         [&](auto&) {
-            Optional<String> path = GUI::FilePicker::get_open_filepath("Open image...");
+            Optional<String> path = GUI::FilePicker::get_open_filepath(window, "Open image...");
             if (path.has_value()) {
                 widget.load_from_file(path.value());
             }
@@ -119,11 +138,11 @@ int main(int argc, char** argv)
             if (path.is_empty())
                 return;
 
-            auto msgbox_result = GUI::MessageBox::show(String::format("Really delete %s?", path.characters()),
+            auto msgbox_result = GUI::MessageBox::show(window,
+                String::format("Really delete %s?", path.characters()),
                 "Confirm deletion",
                 GUI::MessageBox::Type::Warning,
-                GUI::MessageBox::InputType::OKCancel,
-                window);
+                GUI::MessageBox::InputType::OKCancel);
 
             if (msgbox_result == GUI::MessageBox::ExecCancel)
                 return;
@@ -133,11 +152,10 @@ int main(int argc, char** argv)
 
             if (unlink_result < 0) {
                 int saved_errno = errno;
-                GUI::MessageBox::show(String::format("unlink(%s) failed: %s", path.characters(), strerror(saved_errno)),
+                GUI::MessageBox::show(window,
+                    String::format("unlink(%s) failed: %s", path.characters(), strerror(saved_errno)),
                     "Delete failed",
-                    GUI::MessageBox::Type::Error,
-                    GUI::MessageBox::InputType::OK,
-                    window);
+                    GUI::MessageBox::Type::Error);
 
                 return;
             }
@@ -147,7 +165,7 @@ int main(int argc, char** argv)
 
     auto quit_action = GUI::CommonActions::make_quit_action(
         [&](auto&) {
-            app.quit();
+            app->quit();
         });
 
     auto rotate_left_action = GUI::Action::create("Rotate Left", { Mod_None, Key_L },
@@ -168,6 +186,11 @@ int main(int argc, char** argv)
     auto horizontal_flip_action = GUI::Action::create("Horizontal Flip", { Mod_None, Key_H },
         [&](auto&) {
             widget.flip(Gfx::Orientation::Horizontal);
+        });
+
+    auto desktop_wallpaper_action = GUI::Action::create("Set as desktop wallpaper",
+        [&](auto&) {
+            GUI::Desktop::the().set_wallpaper(widget.path());
         });
 
     auto go_first_action = GUI::Action::create("First", { Mod_None, Key_Home }, Gfx::Bitmap::load_from_file("/res/icons/16x16/go-first.png"),
@@ -192,8 +215,7 @@ int main(int argc, char** argv)
 
     auto full_sceen_action = GUI::CommonActions::make_fullscreen_action(
         [&](auto&) {
-            window->set_fullscreen(!window->is_fullscreen());
-            toolbar_container.set_visible(!window->is_fullscreen());
+            widget.on_doubleclick();
         });
 
     auto zoom_in_action = GUI::Action::create("Zoom In", { Mod_None, Key_Plus }, Gfx::Bitmap::load_from_file("/res/icons/16x16/zoom-in.png"),
@@ -201,7 +223,7 @@ int main(int argc, char** argv)
             widget.set_scale(widget.scale() + 10);
         });
 
-    auto zoom_reset_action = GUI::Action::create("Zoom 100%", { Mod_None, Key_0 },
+    auto zoom_reset_action = GUI::Action::create("Zoom 100%", { Mod_None, Key_0 }, Gfx::Bitmap::load_from_file("/res/icons/16x16/zoom-reset.png"),
         [&](auto&) {
             widget.set_scale(100);
         });
@@ -230,6 +252,7 @@ int main(int argc, char** argv)
     main_toolbar.add_action(go_last_action);
     main_toolbar.add_separator();
     main_toolbar.add_action(zoom_in_action);
+    main_toolbar.add_action(zoom_reset_action);
     main_toolbar.add_action(zoom_out_action);
 
     auto menubar = GUI::MenuBar::construct();
@@ -245,6 +268,8 @@ int main(int argc, char** argv)
     image_menu.add_action(rotate_right_action);
     image_menu.add_action(vertical_flip_action);
     image_menu.add_action(horizontal_flip_action);
+    image_menu.add_separator();
+    image_menu.add_action(desktop_wallpaper_action);
 
     auto& navigate_menu = menubar->add_menu("Navigate");
     navigate_menu.add_action(go_first_action);
@@ -264,14 +289,13 @@ int main(int argc, char** argv)
     auto& help_menu = menubar->add_menu("Help");
     help_menu.add_action(about_action);
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     if (path != nullptr) {
         widget.load_from_file(path);
     }
-    widget.on_scale_change(100);
 
     window->show();
 
-    return app.exec();
+    return app->exec();
 }

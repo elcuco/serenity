@@ -38,7 +38,6 @@ RefPtr<ImageData> ImageData::create_with_size(JS::GlobalObject& global_object, i
     if (width > 16384 || height > 16384)
         return nullptr;
 
-
     dbg() << "Creating ImageData with " << width << "x" << height;
 
     auto* data = JS::Uint8ClampedArray::create(global_object, width * height * 4);
@@ -47,7 +46,7 @@ RefPtr<ImageData> ImageData::create_with_size(JS::GlobalObject& global_object, i
 
     auto data_handle = JS::make_handle(data);
 
-    auto bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::RGBA32, Gfx::Size(width, height), width * sizeof(u32), (u32*)data->data());
+    auto bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::RGBA32, Gfx::IntSize(width, height), width * sizeof(u32), (u32*)data->data());
     if (!bitmap)
         return nullptr;
     return adopt(*new ImageData(bitmap.release_nonnull(), move(data_handle)));
@@ -63,12 +62,12 @@ ImageData::~ImageData()
 {
 }
 
-int ImageData::width() const
+unsigned ImageData::width() const
 {
     return m_bitmap->width();
 }
 
-int ImageData::height() const
+unsigned ImageData::height() const
 {
     return m_bitmap->height();
 }

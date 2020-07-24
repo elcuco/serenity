@@ -26,8 +26,7 @@
 
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
-#include <Kernel/KernelInfoPage.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -51,17 +50,8 @@ time_t time(time_t* tloc)
 
 int gettimeofday(struct timeval* __restrict__ tv, void* __restrict__)
 {
-    static volatile KernelInfoPage* kernel_info;
-    if (!kernel_info)
-        kernel_info = (volatile KernelInfoPage*)syscall(SC_get_kernel_info_page);
-
-    for (;;) {
-        auto serial = kernel_info->serial;
-        *tv = const_cast<struct timeval&>(kernel_info->now);
-        if (serial == kernel_info->serial)
-            break;
-    }
-    return 0;
+    int rc = syscall(SC_gettimeofday, tv);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
 char* ctime(const time_t* t)
@@ -338,6 +328,11 @@ int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec* reques
     Syscall::SC_clock_nanosleep_params params { clock_id, flags, requested_sleep, remaining_sleep };
     int rc = syscall(SC_clock_nanosleep, &params);
     __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int nanosleep(const struct timespec* requested_sleep, struct timespec* remaining_sleep)
+{
+    return clock_nanosleep(CLOCK_REALTIME, 0, requested_sleep, remaining_sleep);
 }
 
 int clock_getres(clockid_t, struct timespec*)

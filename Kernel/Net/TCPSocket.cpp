@@ -372,7 +372,7 @@ KResult TCPSocket::protocol_connect(FileDescription& description, ShouldBlock sh
     m_direction = Direction::Outgoing;
 
     if (should_block == ShouldBlock::Yes) {
-        if (Thread::current->block<Thread::ConnectBlocker>(description) != Thread::BlockResult::WokeNormally)
+        if (Thread::current()->block<Thread::ConnectBlocker>(description).was_interrupted())
             return KResult(-EINTR);
         ASSERT(setup_state() == SetupState::Completed);
         if (has_error()) {
@@ -440,9 +440,9 @@ void TCPSocket::shut_down_for_writing()
     }
 }
 
-void TCPSocket::close()
+KResult TCPSocket::close()
 {
-    IPv4Socket::close();
+    auto result = IPv4Socket::close();
     if (state() == State::CloseWait) {
 #ifdef TCP_SOCKET_DEBUG
         dbg() << " Sending FIN from CloseWait and moving into LastAck";
@@ -453,6 +453,7 @@ void TCPSocket::close()
 
     LOCKER(closing_sockets().lock());
     closing_sockets().resource().set(tuple(), *this);
+    return result;
 }
 
 }

@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <AK/ByteBuffer.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
@@ -42,9 +43,9 @@ struct ImageFrameDescriptor {
 
 class ImageDecoderPlugin {
 public:
-    virtual ~ImageDecoderPlugin() {}
+    virtual ~ImageDecoderPlugin() { }
 
-    virtual Size size() = 0;
+    virtual IntSize size() = 0;
     virtual RefPtr<Gfx::Bitmap> bitmap() = 0;
 
     virtual void set_volatile() = 0;
@@ -58,25 +59,32 @@ public:
     virtual ImageFrameDescriptor frame(size_t i) = 0;
 
 protected:
-    ImageDecoderPlugin() {}
+    ImageDecoderPlugin() { }
 };
 
 class ImageDecoder : public RefCounted<ImageDecoder> {
 public:
     static NonnullRefPtr<ImageDecoder> create(const u8* data, size_t size) { return adopt(*new ImageDecoder(data, size)); }
+    static NonnullRefPtr<ImageDecoder> create(const ByteBuffer& data) { return adopt(*new ImageDecoder(data.data(), data.size())); }
     ~ImageDecoder();
 
-    Size size() const { return m_plugin->size(); }
+    bool is_valid() const { return m_plugin; }
+
+    IntSize size() const { return m_plugin ? m_plugin->size() : IntSize(); }
     int width() const { return size().width(); }
     int height() const { return size().height(); }
     RefPtr<Gfx::Bitmap> bitmap() const;
-    void set_volatile() { m_plugin->set_volatile(); }
-    [[nodiscard]] bool set_nonvolatile() { return m_plugin->set_nonvolatile(); }
-    bool sniff() const { return m_plugin->sniff(); }
-    bool is_animated() const { return m_plugin->is_animated(); }
-    size_t loop_count() const { return m_plugin->loop_count(); }
-    size_t frame_count() const { return m_plugin->frame_count(); }
-    ImageFrameDescriptor frame(size_t i) const { return m_plugin->frame(i); }
+    void set_volatile()
+    {
+        if (m_plugin)
+            m_plugin->set_volatile();
+    }
+    [[nodiscard]] bool set_nonvolatile() { return m_plugin ? m_plugin->set_nonvolatile() : false; }
+    bool sniff() const { return m_plugin ? m_plugin->sniff() : false; }
+    bool is_animated() const { return m_plugin ? m_plugin->is_animated() : false; }
+    size_t loop_count() const { return m_plugin ? m_plugin->loop_count() : 0; }
+    size_t frame_count() const { return m_plugin ? m_plugin->frame_count() : 0; }
+    ImageFrameDescriptor frame(size_t i) const { return m_plugin ? m_plugin->frame(i) : ImageFrameDescriptor(); }
 
 private:
     ImageDecoder(const u8*, size_t);

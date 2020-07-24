@@ -28,6 +28,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 
 namespace Gfx {
 
@@ -40,10 +41,18 @@ ShareableBitmap::ShareableBitmap(const Bitmap& bitmap)
 
 namespace IPC {
 
+bool encode(Encoder& encoder, const Gfx::ShareableBitmap& shareable_bitmap)
+{
+    encoder << shareable_bitmap.shbuf_id();
+    encoder << shareable_bitmap.width();
+    encoder << shareable_bitmap.height();
+    return true;
+}
+
 bool decode(Decoder& decoder, Gfx::ShareableBitmap& shareable_bitmap)
 {
     i32 shbuf_id = 0;
-    Gfx::Size size;
+    Gfx::IntSize size;
     if (!decoder.decode(shbuf_id))
         return false;
     if (!decoder.decode(size))

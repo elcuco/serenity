@@ -27,7 +27,7 @@
 #include <AK/ScopedValueRollback.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
-#include <Kernel/Syscall.h>
+#include <Kernel/API/Syscall.h>
 #include <alloca.h>
 #include <assert.h>
 #include <errno.h>
@@ -47,6 +47,7 @@
 extern "C" {
 
 static __thread int s_cached_tid = 0;
+static __thread int s_cached_pid = 0;
 
 int chown(const char* pathname, uid_t uid, gid_t gid)
 {
@@ -68,8 +69,10 @@ int fchown(int fd, uid_t uid, gid_t gid)
 pid_t fork()
 {
     int rc = syscall(SC_fork);
-    if (rc == 0)
+    if (rc == 0) {
         s_cached_tid = 0;
+        s_cached_pid = 0;
+    }
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
@@ -135,7 +138,9 @@ int execvpe(const char* filename, char* const argv[], char* const envp[])
 int execvp(const char* filename, char* const argv[])
 {
     int rc = execvpe(filename, argv, environ);
-    dbg() << "execvp() about to return " << rc << " with errno=" << errno;
+    int saved_errno = errno;
+    dbg() << "execvp() about to return " << rc << " with errno=" << saved_errno;
+    errno = saved_errno;
     return rc;
 }
 
@@ -175,16 +180,6 @@ int execlp(const char* filename, const char* arg0, ...)
     return execvpe(filename, const_cast<char* const*>(args.data()), environ);
 }
 
-uid_t getuid()
-{
-    return syscall(SC_getuid);
-}
-
-gid_t getgid()
-{
-    return syscall(SC_getgid);
-}
-
 uid_t geteuid()
 {
     return syscall(SC_geteuid);
@@ -195,14 +190,39 @@ gid_t getegid()
     return syscall(SC_getegid);
 }
 
+uid_t getuid()
+{
+    return syscall(SC_getuid);
+}
+
+gid_t getgid()
+{
+    return syscall(SC_getgid);
+}
+
 pid_t getpid()
 {
-    return syscall(SC_getpid);
+    int cached_pid = s_cached_pid;
+    if (!cached_pid) {
+        cached_pid = syscall(SC_getpid);
+        s_cached_pid = cached_pid;
+    }
+    return cached_pid;
 }
 
 pid_t getppid()
 {
     return syscall(SC_getppid);
+}
+
+int getresuid(uid_t* ruid, uid_t* euid, uid_t* suid)
+{
+    return syscall(SC_getresuid, ruid, euid, suid);
+}
+
+int getresgid(gid_t* rgid, gid_t* egid, gid_t* sgid)
+{
+    return syscall(SC_getresgid, rgid, egid, sgid);
 }
 
 pid_t getsid(pid_t pid)
@@ -362,7 +382,8 @@ ssize_t readlink(const char* path, char* buffer, size_t size)
 {
     Syscall::SC_readlink_params params { { path, strlen(path) }, { buffer, size } };
     int rc = syscall(SC_readlink, &params);
-    __RETURN_WITH_ERRNO(rc, rc, -1);
+    // Return the number of bytes placed in the buffer, not the full path size.
+    __RETURN_WITH_ERRNO(rc, min((size_t)rc, size), -1);
 }
 
 off_t lseek(int fd, off_t offset, int whence)
@@ -411,14 +432,7 @@ int rmdir(const char* pathname)
 
 int isatty(int fd)
 {
-    struct termios dummy;
-    return tcgetattr(fd, &dummy) == 0;
-}
-
-int getdtablesize()
-{
-    int rc = syscall(SC_getdtablesize);
-    __RETURN_WITH_ERRNO(rc, rc, -1);
+    return fcntl(fd, F_ISTTY);
 }
 
 int dup(int old_fd)
@@ -461,15 +475,39 @@ unsigned int alarm(unsigned int seconds)
     return syscall(SC_alarm, seconds);
 }
 
+int seteuid(uid_t euid)
+{
+    int rc = syscall(SC_seteuid, euid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int setegid(gid_t egid)
+{
+    int rc = syscall(SC_setegid, egid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
 int setuid(uid_t uid)
 {
     int rc = syscall(SC_setuid, uid);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-int setgid(uid_t gid)
+int setgid(gid_t gid)
 {
     int rc = syscall(SC_setgid, gid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int setresuid(uid_t ruid, uid_t euid, uid_t suid)
+{
+    int rc = syscall(SC_setresuid, ruid, euid, suid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
+int setresgid(gid_t rgid, gid_t egid, gid_t sgid)
+{
+    int rc = syscall(SC_setresgid, rgid, egid, sgid);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
@@ -558,11 +596,27 @@ int ftruncate(int fd, off_t length)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
+int truncate(const char* path, off_t length)
+{
+    int fd = open(path, O_RDWR | O_CREAT, 0666);
+    if (fd < 0)
+        return fd;
+    int rc = ftruncate(fd, length);
+    int saved_errno = errno;
+    if (int close_rc = close(fd); close_rc < 0)
+        return close_rc;
+    errno = saved_errno;
+    return rc;
+}
+
 int gettid()
 {
-    if (!s_cached_tid)
-        s_cached_tid = syscall(SC_gettid);
-    return s_cached_tid;
+    int cached_tid = s_cached_tid;
+    if (!cached_tid) {
+        cached_tid = syscall(SC_gettid);
+        s_cached_tid = cached_tid;
+    }
+    return cached_tid;
 }
 
 int donate(int tid)
@@ -678,5 +732,11 @@ char* getpass(const char* prompt)
 {
     dbg() << "FIXME: getpass(\"" << prompt << "\")";
     ASSERT_NOT_REACHED();
+}
+
+long sysconf(int name)
+{
+    int rc = syscall(SC_sysconf, name);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 }

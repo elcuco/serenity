@@ -43,6 +43,7 @@ namespace GUI {
 
 namespace CommonActions {
     NonnullRefPtr<Action> make_open_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+    NonnullRefPtr<Action> make_save_action(Function<void(Action&)>, Core::Object* parent = nullptr);
     NonnullRefPtr<Action> make_undo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
     NonnullRefPtr<Action> make_redo_action(Function<void(Action&)>, Core::Object* parent = nullptr);
     NonnullRefPtr<Action> make_cut_action(Function<void(Action&)>, Core::Object* parent = nullptr);
@@ -57,6 +58,7 @@ namespace CommonActions {
     NonnullRefPtr<Action> make_go_forward_action(Function<void(Action&)>, Core::Object* parent = nullptr);
     NonnullRefPtr<Action> make_go_home_action(Function<void(Action&)> callback, Core::Object* parent = nullptr);
     NonnullRefPtr<Action> make_reload_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+    NonnullRefPtr<Action> make_select_all_action(Function<void(Action&)>, Core::Object* parent = nullptr);
 };
 
 class Action final : public Core::Object {
@@ -104,6 +106,7 @@ public:
     virtual ~Action() override;
 
     String text() const { return m_text; }
+    void set_text(String text) { m_text = move(text); }
     Shortcut shortcut() const { return m_shortcut; }
     const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
     void set_icon(const Gfx::Bitmap*);

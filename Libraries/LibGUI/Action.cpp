@@ -29,6 +29,7 @@
 #include <LibGUI/Application.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/MenuItem.h>
+#include <LibGUI/Window.h>
 
 namespace GUI {
 
@@ -37,6 +38,11 @@ namespace CommonActions {
 NonnullRefPtr<Action> make_open_action(Function<void(Action&)> callback, Core::Object* parent)
 {
     return Action::create("Open...", { Mod_Ctrl, Key_O }, Gfx::Bitmap::load_from_file("/res/icons/16x16/open.png"), move(callback), parent);
+}
+
+NonnullRefPtr<Action> make_save_action(Function<void(Action&)> callback, Core::Object* parent)
+{
+    return Action::create("Save", { Mod_Ctrl, Key_S }, Gfx::Bitmap::load_from_file("/res/icons/16x16/save.png"), move(callback), parent);
 }
 
 NonnullRefPtr<Action> make_move_to_front_action(Function<void(Action&)> callback, Core::Object* parent)
@@ -109,6 +115,11 @@ NonnullRefPtr<Action> make_reload_action(Function<void(Action&)> callback, Core:
     return Action::create("Reload", { Mod_Ctrl, Key_R }, Gfx::Bitmap::load_from_file("/res/icons/16x16/reload.png"), move(callback), parent);
 }
 
+NonnullRefPtr<Action> make_select_all_action(Function<void(Action&)> callback, Core::Object* parent)
+{
+    return Action::create("Select all", { Mod_Ctrl, Key_A }, Gfx::Bitmap::load_from_file("/res/icons/16x16/select-all.png"), move(callback), parent);
+}
+
 }
 
 Action::Action(const StringView& text, Function<void(Action&)> on_activation_callback, Core::Object* parent, bool checkable)
@@ -147,14 +158,18 @@ Action::Action(const StringView& text, const Shortcut& shortcut, RefPtr<Gfx::Bit
         m_scope = ShortcutScope::WindowLocal;
     } else {
         m_scope = ShortcutScope::ApplicationGlobal;
-        Application::the().register_global_shortcut_action({}, *this);
+        if (auto* app = Application::the()) {
+            app->register_global_shortcut_action({}, *this);
+        }
     }
 }
 
 Action::~Action()
 {
-    if (m_shortcut.is_valid() && m_scope == ShortcutScope::ApplicationGlobal)
-        Application::the().unregister_global_shortcut_action({}, *this);
+    if (m_shortcut.is_valid() && m_scope == ShortcutScope::ApplicationGlobal) {
+        if (auto* app = Application::the())
+            app->unregister_global_shortcut_action({}, *this);
+    }
 }
 
 void Action::activate(Core::Object* activator)

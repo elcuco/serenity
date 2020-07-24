@@ -24,7 +24,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <Kernel/KeyCode.h>
 #include <LibGUI/ListView.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
@@ -83,17 +82,17 @@ void ListView::did_update_model(unsigned flags)
     update();
 }
 
-Gfx::Rect ListView::content_rect(int row) const
+Gfx::IntRect ListView::content_rect(int row) const
 {
     return { 0, row * item_height(), content_width(), item_height() };
 }
 
-Gfx::Rect ListView::content_rect(const ModelIndex& index) const
+Gfx::IntRect ListView::content_rect(const ModelIndex& index) const
 {
     return content_rect(index.row());
 }
 
-ModelIndex ListView::index_at_event_position(const Gfx::Point& point) const
+ModelIndex ListView::index_at_event_position(const Gfx::IntPoint& point) const
 {
     ASSERT(model());
 
@@ -106,7 +105,7 @@ ModelIndex ListView::index_at_event_position(const Gfx::Point& point) const
     return {};
 }
 
-Gfx::Point ListView::adjusted_position(const Gfx::Point& position) const
+Gfx::IntPoint ListView::adjusted_position(const Gfx::IntPoint& position) const
 {
     return position.translated(horizontal_scrollbar().value() - frame_thickness(), vertical_scrollbar().value() - frame_thickness());
 }
@@ -128,7 +127,12 @@ void ListView::paint_event(PaintEvent& event)
     int painted_item_index = 0;
 
     for (int row_index = 0; row_index < model()->row_count(); ++row_index) {
-        bool is_selected_row = selection().contains_row(row_index);
+        bool is_selected_row;
+        if (hover_highlighting() && m_last_valid_hovered_index.is_valid())
+            is_selected_row = row_index == m_last_valid_hovered_index.row();
+        else
+            is_selected_row = selection().contains_row(row_index);
+
         int y = painted_item_index * item_height();
 
         Color background_color;
@@ -143,9 +147,7 @@ void ListView::paint_event(PaintEvent& event)
             }
         }
 
-        auto column_metadata = model()->column_metadata(m_model_column);
-
-        Gfx::Rect row_rect(0, y, content_width(), item_height());
+        Gfx::IntRect row_rect(0, y, content_width(), item_height());
         painter.fill_rect(row_rect, background_color);
         auto index = model()->index(row_index, m_model_column);
         auto data = model()->data(index);
@@ -164,13 +166,14 @@ void ListView::paint_event(PaintEvent& event)
             auto text_rect = row_rect;
             text_rect.move_by(horizontal_padding(), 0);
             text_rect.set_width(text_rect.width() - horizontal_padding() * 2);
-            painter.draw_text(text_rect, data.to_string(), font, column_metadata.text_alignment, text_color);
+            auto text_alignment = model()->data(index, Model::Role::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterLeft);
+            painter.draw_text(text_rect, data.to_string(), font, text_alignment, text_color);
         }
 
         ++painted_item_index;
     };
 
-    Gfx::Rect unpainted_rect(0, painted_item_index * item_height(), exposed_width, height());
+    Gfx::IntRect unpainted_rect(0, painted_item_index * item_height(), exposed_width, height());
     if (fill_with_background_color())
         painter.fill_rect(unpainted_rect, palette().color(background_role()));
 }
@@ -182,49 +185,71 @@ int ListView::item_count() const
     return model()->row_count();
 }
 
+void ListView::move_selection(int steps)
+{
+    if (!model())
+        return;
+    auto& model = *this->model();
+    ModelIndex new_index;
+    if (!selection().is_empty()) {
+        if (hover_highlighting() && m_last_valid_hovered_index.is_valid()) {
+            new_index = model.index(m_last_valid_hovered_index.row() + steps, m_last_valid_hovered_index.column());
+        } else {
+            auto old_index = selection().first();
+            new_index = model.index(old_index.row() + steps, old_index.column());
+        }
+    } else {
+        if (hover_highlighting() && m_last_valid_hovered_index.is_valid()) {
+            new_index = model.index(m_last_valid_hovered_index.row() + steps, m_last_valid_hovered_index.column());
+        } else {
+            new_index = model.index(0, 0);
+        }
+    }
+    if (model.is_valid(new_index)) {
+        set_last_valid_hovered_index({});
+        selection().set(new_index);
+        scroll_into_view(new_index, Orientation::Vertical);
+        update();
+    } else {
+        if (hover_highlighting() && m_last_valid_hovered_index.is_valid()) {
+            new_index = model.index(m_last_valid_hovered_index.row(), m_last_valid_hovered_index.column());
+            selection().set(new_index);
+        }
+    }
+}
+
 void ListView::keydown_event(KeyEvent& event)
 {
     if (!model())
         return;
     auto& model = *this->model();
+    ModelIndex new_index;
     if (event.key() == KeyCode::Key_Return) {
+        if (hover_highlighting() && m_last_valid_hovered_index.is_valid()) {
+            auto new_index = model.index(m_last_valid_hovered_index.row(), m_last_valid_hovered_index.column());
+            selection().set(new_index);
+        }
         activate_selected();
         return;
     }
     if (event.key() == KeyCode::Key_Up) {
-        ModelIndex new_index;
-        if (!selection().is_empty()) {
-            auto old_index = selection().first();
-            new_index = model.index(old_index.row() - 1, old_index.column());
-        } else {
-            new_index = model.index(0, 0);
-        }
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
+        move_selection(-1);
         return;
     }
     if (event.key() == KeyCode::Key_Down) {
-        ModelIndex new_index;
-        if (!selection().is_empty()) {
-            auto old_index = selection().first();
-            new_index = model.index(old_index.row() + 1, old_index.column());
-        } else {
-            new_index = model.index(0, 0);
-        }
-        if (model.is_valid(new_index)) {
-            selection().set(new_index);
-            scroll_into_view(new_index, Orientation::Vertical);
-            update();
-        }
+        move_selection(1);
         return;
     }
     if (event.key() == KeyCode::Key_PageUp) {
-        int items_per_page = visible_content_rect().height() / item_height();
-        auto old_index = selection().first();
-        auto new_index = model.index(max(0, old_index.row() - items_per_page), old_index.column());
+        if (hover_highlighting())
+            set_last_valid_hovered_index({});
+        if (!selection().is_empty()) {
+            int items_per_page = visible_content_rect().height() / item_height();
+            auto old_index = selection().first();
+            new_index = model.index(max(0, old_index.row() - items_per_page), old_index.column());
+        } else {
+            new_index = model.index(0, 0);
+        }
         if (model.is_valid(new_index)) {
             selection().set(new_index);
             scroll_into_view(new_index, Orientation::Vertical);
@@ -233,14 +258,25 @@ void ListView::keydown_event(KeyEvent& event)
         return;
     }
     if (event.key() == KeyCode::Key_PageDown) {
-        int items_per_page = visible_content_rect().height() / item_height();
-        auto old_index = selection().first();
-        auto new_index = model.index(min(model.row_count() - 1, old_index.row() + items_per_page), old_index.column());
+        if (hover_highlighting())
+            set_last_valid_hovered_index({});
+        if (!selection().is_empty()) {
+            int items_per_page = visible_content_rect().height() / item_height();
+            auto old_index = selection().first();
+            new_index = model.index(min(model.row_count() - 1, old_index.row() + items_per_page), old_index.column());
+        } else {
+            new_index = model.index(0, 0);
+        }
         if (model.is_valid(new_index)) {
             selection().set(new_index);
             scroll_into_view(new_index, Orientation::Vertical);
             update();
         }
+        return;
+    }
+    if (event.key() == KeyCode::Key_Escape) {
+        if (on_escape_pressed)
+            on_escape_pressed();
         return;
     }
     return Widget::keydown_event(event);

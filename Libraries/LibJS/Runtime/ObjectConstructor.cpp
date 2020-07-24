@@ -35,139 +35,194 @@
 
 namespace JS {
 
-ObjectConstructor::ObjectConstructor()
-    : NativeFunction("Object", *interpreter().global_object().function_prototype())
+ObjectConstructor::ObjectConstructor(GlobalObject& global_object)
+    : NativeFunction("Object", *global_object.function_prototype())
 {
-    put("prototype", interpreter().global_object().object_prototype(), 0);
-    put("length", Value(1), Attribute::Configurable);
+}
+
+void ObjectConstructor::initialize(GlobalObject& global_object)
+{
+    NativeFunction::initialize(global_object);
+    define_property("prototype", global_object.object_prototype(), 0);
+    define_property("length", Value(1), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
-    put_native_function("defineProperty", define_property, 3, attr);
-    put_native_function("is", is, 2, attr);
-    put_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2, attr);
-    put_native_function("getOwnPropertyNames", get_own_property_names, 1, attr);
-    put_native_function("getPrototypeOf", get_prototype_of, 1, attr);
-    put_native_function("setPrototypeOf", set_prototype_of, 2, attr);
-    put_native_function("keys", keys, 1, attr);
-    put_native_function("values", values, 1, attr);
-    put_native_function("entries", entries, 1, attr);
+    define_native_function("defineProperty", define_property_, 3, attr);
+    define_native_function("is", is, 2, attr);
+    define_native_function("getOwnPropertyDescriptor", get_own_property_descriptor, 2, attr);
+    define_native_function("getOwnPropertyNames", get_own_property_names, 1, attr);
+    define_native_function("getPrototypeOf", get_prototype_of, 1, attr);
+    define_native_function("setPrototypeOf", set_prototype_of, 2, attr);
+    define_native_function("isExtensible", is_extensible, 1, attr);
+    define_native_function("preventExtensions", prevent_extensions, 1, attr);
+    define_native_function("keys", keys, 1, attr);
+    define_native_function("values", values, 1, attr);
+    define_native_function("entries", entries, 1, attr);
 }
 
 ObjectConstructor::~ObjectConstructor()
 {
 }
 
-Value ObjectConstructor::call(Interpreter& interpreter)
+Value ObjectConstructor::call(Interpreter&)
 {
-    return Object::create_empty(interpreter, interpreter.global_object());
+    return Object::create_empty(global_object());
 }
 
-Value ObjectConstructor::construct(Interpreter& interpreter)
+Value ObjectConstructor::construct(Interpreter& interpreter, Function&)
 {
     return call(interpreter);
 }
 
-Value ObjectConstructor::get_own_property_names(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_names)
 {
     if (!interpreter.argument_count())
         return {};
-    auto* object = interpreter.argument(0).to_object(interpreter.heap());
+    auto* object = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
-    auto* result = Array::create(interpreter.global_object());
-    for (size_t i = 0; i < object->elements().size(); ++i) {
-        if (!object->elements()[i].is_empty())
-            result->elements().append(js_string(interpreter, String::number(i)));
+    auto* result = Array::create(global_object);
+    for (auto& entry : object->indexed_properties())
+        result->indexed_properties().append(js_string(interpreter, String::number(entry.index())));
+    for (auto& it : object->shape().property_table_ordered()) {
+        if (!it.key.is_string())
+            continue;
+        result->indexed_properties().append(js_string(interpreter, it.key.as_string()));
     }
 
-    for (auto& it : object->shape().property_table_ordered()) {
-        result->elements().append(js_string(interpreter, it.key));
-    }
     return result;
 }
 
-Value ObjectConstructor::get_prototype_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_prototype_of)
 {
     if (!interpreter.argument_count())
         return {};
-    auto* object = interpreter.argument(0).to_object(interpreter.heap());
+    auto* object = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
     return object->prototype();
 }
 
-Value ObjectConstructor::set_prototype_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::set_prototype_of)
 {
     if (interpreter.argument_count() < 2)
-        return {};
-    auto* object = interpreter.argument(0).to_object(interpreter.heap());
+        return interpreter.throw_exception<TypeError>(ErrorType::ObjectSetPrototypeOfTwoArgs);
+    auto* object = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
-    object->set_prototype(&const_cast<Object&>(interpreter.argument(1).as_object()));
-    return {};
+    auto prototype_value = interpreter.argument(1);
+    Object* prototype;
+    if (prototype_value.is_null()) {
+        prototype = nullptr;
+    } else if (prototype_value.is_object()) {
+        prototype = &prototype_value.as_object();
+    } else {
+        interpreter.throw_exception<TypeError>(ErrorType::ObjectPrototypeWrongType);
+        return {};
+    }
+    if (!object->set_prototype(prototype)) {
+        if (!interpreter.exception())
+            interpreter.throw_exception<TypeError>(ErrorType::ObjectSetPrototypeOfReturnedFalse);
+        return {};
+    }
+    return object;
 }
 
-Value ObjectConstructor::get_own_property_descriptor(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::is_extensible)
 {
-    auto* object = interpreter.argument(0).to_object(interpreter.heap());
-    if (interpreter.exception())
-        return {};
-    auto property_key = interpreter.argument(1).to_string();
-    return object->get_own_property_descriptor(property_key);
+    auto argument = interpreter.argument(0);
+    if (!argument.is_object())
+        return Value(false);
+    return Value(argument.as_object().is_extensible());
 }
 
-Value ObjectConstructor::define_property(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::prevent_extensions)
+{
+    auto argument = interpreter.argument(0);
+    if (!argument.is_object())
+        return argument;
+    if (!argument.as_object().prevent_extensions()) {
+        if (!interpreter.exception())
+            interpreter.throw_exception<TypeError>(ErrorType::ObjectPreventExtensionsReturnedFalse);
+        return {};
+    }
+    return argument;
+}
+
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::get_own_property_descriptor)
+{
+    auto* object = interpreter.argument(0).to_object(interpreter, global_object);
+    if (interpreter.exception())
+        return {};
+    auto property_key = PropertyName::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
+    return object->get_own_property_descriptor_object(property_key);
+}
+
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::define_property_)
 {
     if (!interpreter.argument(0).is_object())
-        return interpreter.throw_exception<TypeError>("Object argument is not an object");
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAnObject, "Object argument");
     if (!interpreter.argument(2).is_object())
-        return interpreter.throw_exception<TypeError>("Descriptor argument is not an object");
+        return interpreter.throw_exception<TypeError>(ErrorType::NotAnObject, "Descriptor argument");
     auto& object = interpreter.argument(0).as_object();
-    auto property_key = interpreter.argument(1).to_string();
+    auto property_key = StringOrSymbol::from_value(interpreter, interpreter.argument(1));
+    if (interpreter.exception())
+        return {};
     auto& descriptor = interpreter.argument(2).as_object();
-    object.define_property(property_key, descriptor);
+    if (!object.define_property(property_key, descriptor)) {
+        if (!interpreter.exception()) {
+            if (object.is_proxy_object()) {
+                interpreter.throw_exception<TypeError>(ErrorType::ObjectDefinePropertyReturnedFalse);
+            } else {
+                interpreter.throw_exception<TypeError>(ErrorType::NonExtensibleDefine, property_key.to_display_string().characters());
+            }
+        }
+        return {};
+    }
     return &object;
 }
 
-Value ObjectConstructor::is(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::is)
 {
     return Value(same_value(interpreter, interpreter.argument(0), interpreter.argument(1)));
 }
 
-Value ObjectConstructor::keys(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::keys)
 {
     if (!interpreter.argument_count())
-        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+        return interpreter.throw_exception<TypeError>(ErrorType::ConvertUndefinedToObject);
 
-    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
 
-    return obj_arg->get_own_properties(*obj_arg, GetOwnPropertyMode::Key, Attribute::Enumerable);
+    return obj_arg->get_own_properties(*obj_arg, PropertyKind::Key, true);
 }
 
-Value ObjectConstructor::values(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::values)
 {
     if (!interpreter.argument_count())
-        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+        return interpreter.throw_exception<TypeError>(ErrorType::ConvertUndefinedToObject);
 
-    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
 
-    return obj_arg->get_own_properties(*obj_arg, GetOwnPropertyMode::Value, Attribute::Enumerable);
+    return obj_arg->get_own_properties(*obj_arg, PropertyKind::Value, true);
 }
 
-Value ObjectConstructor::entries(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(ObjectConstructor::entries)
 {
     if (!interpreter.argument_count())
-        return interpreter.throw_exception<TypeError>("Can't convert undefined to object");
+        return interpreter.throw_exception<TypeError>(ErrorType::ConvertUndefinedToObject);
 
-    auto* obj_arg = interpreter.argument(0).to_object(interpreter.heap());
+    auto* obj_arg = interpreter.argument(0).to_object(interpreter, global_object);
     if (interpreter.exception())
         return {};
 
-    return obj_arg->get_own_properties(*obj_arg, GetOwnPropertyMode::KeyAndValue, Attribute::Enumerable);
+    return obj_arg->get_own_properties(*obj_arg, PropertyKind::KeyAndValue, true);
 }
 
 }

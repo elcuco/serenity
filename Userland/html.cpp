@@ -32,20 +32,12 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/MenuBar.h>
 #include <LibGUI/Window.h>
-#include <LibWeb/CSS/StyleResolver.h>
-#include <LibWeb/DOM/Element.h>
-#include <LibWeb/Dump.h>
-#include <LibWeb/HtmlView.h>
-#include <LibWeb/Layout/LayoutBlock.h>
-#include <LibWeb/Layout/LayoutInline.h>
-#include <LibWeb/Layout/LayoutNode.h>
-#include <LibWeb/Parser/CSSParser.h>
-#include <LibWeb/Parser/HTMLParser.h>
+#include <LibWeb/PageView.h>
 #include <stdio.h>
 
 int main(int argc, char** argv)
 {
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     auto f = Core::File::construct();
     bool success;
@@ -60,12 +52,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    String html = String::copy(f->read_all());
-    auto document = Web::parse_html_document(html);
+    auto html = f->read_all();
 
     auto window = GUI::Window::construct();
-    auto& widget = window->set_main_widget<Web::HtmlView>();
-    widget.set_document(document);
+    auto& widget = window->set_main_widget<Web::PageView>();
+    widget.load_html(html, URL());
     if (!widget.document()->title().is_null())
         window->set_title(String::format("%s - HTML", widget.document()->title().characters()));
     else
@@ -76,7 +67,7 @@ int main(int argc, char** argv)
 
     auto& app_menu = menubar->add_menu("HTML");
     app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
-        app.quit();
+        app->quit();
     }));
 
     auto& help_menu = menubar->add_menu("Help");
@@ -84,9 +75,9 @@ int main(int argc, char** argv)
         GUI::AboutDialog::show("HTML", Gfx::Bitmap::load_from_file("/res/icons/32x32/filetype-html.png"), window);
     }));
 
-    app.set_menubar(move(menubar));
+    app->set_menubar(move(menubar));
 
     window->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-html.png"));
 
-    return app.exec();
+    return app->exec();
 }

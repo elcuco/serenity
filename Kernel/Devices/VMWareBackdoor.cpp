@@ -29,8 +29,8 @@
 #include <Kernel/Arch/i386/CPU.h>
 #include <Kernel/CommandLine.h>
 #include <Kernel/Devices/VMWareBackdoor.h>
-#include <Kernel/MousePacket.h>
-#include <LibBareMetal/IO.h>
+#include <Kernel/API/MousePacket.h>
+#include <Kernel/IO.h>
 
 namespace Kernel {
 

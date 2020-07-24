@@ -69,17 +69,21 @@ public:
     bool has_selection() const;
     bool selection_contains(const VT::Position&) const;
     String selected_text() const;
-    VT::Position buffer_position_at(const Gfx::Point&) const;
+    VT::Position buffer_position_at(const Gfx::IntPoint&) const;
     VT::Position normalized_selection_start() const;
     VT::Position normalized_selection_end() const;
 
     bool is_scrollable() const;
+    int scroll_length() const;
+    void set_scroll_length(int);
 
     GUI::Action& copy_action() { return *m_copy_action; }
     GUI::Action& paste_action() { return *m_paste_action; }
+    GUI::Action& clear_including_history_action() { return *m_clear_including_history_action; }
 
     void copy();
     void paste();
+    void clear_including_history();
 
     virtual bool accepts_focus() const override { return true; }
 
@@ -108,21 +112,22 @@ private:
     // ^TerminalClient
     virtual void beep() override;
     virtual void set_window_title(const StringView&) override;
+    virtual void set_window_progress(int value, int max) override;
     virtual void terminal_did_resize(u16 columns, u16 rows) override;
     virtual void terminal_history_changed() override;
     virtual void emit(const u8*, size_t) override;
 
     void set_logical_focus(bool);
 
-    Gfx::Rect glyph_rect(u16 row, u16 column);
-    Gfx::Rect row_rect(u16 row);
+    Gfx::IntRect glyph_rect(u16 row, u16 column);
+    Gfx::IntRect row_rect(u16 row);
 
     void update_cursor();
     void invalidate_cursor();
 
-    void relayout(const Gfx::Size&);
+    void relayout(const Gfx::IntSize&);
 
-    Gfx::Size compute_base_size() const;
+    Gfx::IntSize compute_base_size() const;
     int first_selection_column_on_row(int row) const;
     int last_selection_column_on_row(int row) const;
 
@@ -175,11 +180,12 @@ private:
 
     RefPtr<GUI::Action> m_copy_action;
     RefPtr<GUI::Action> m_paste_action;
+    RefPtr<GUI::Action> m_clear_including_history_action;
 
     RefPtr<GUI::Menu> m_context_menu;
     RefPtr<GUI::Menu> m_context_menu_for_hyperlink;
 
     Core::ElapsedTimer m_triple_click_timer;
 
-    Gfx::Point m_left_mousedown_position;
+    Gfx::IntPoint m_left_mousedown_position;
 };

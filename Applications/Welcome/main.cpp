@@ -24,6 +24,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "BackgroundWidget.h"
+#include "TextWidget.h"
+#include "UnuncheckableButton.h"
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
@@ -33,6 +36,7 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/Desktop.h>
+#include <LibGUI/ImageWidget.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/StackWidget.h>
@@ -41,10 +45,6 @@
 #include <LibGfx/Font.h>
 #include <stdio.h>
 #include <unistd.h>
-
-#include "BackgroundWidget.h"
-#include "TextWidget.h"
-#include "UnuncheckableButton.h"
 
 struct ContentPage {
     String menu_name;
@@ -133,7 +133,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
 
     if (pledge("stdio shared_buffer rpath", nullptr) < 0) {
         perror("pledge");
@@ -149,14 +149,14 @@ int main(int argc, char** argv)
 
     Optional<Vector<ContentPage>> _pages = parse_welcome_file("/res/welcome.txt");
     if (!_pages.has_value()) {
-        GUI::MessageBox::show("Could not open Welcome file.", "Welcome", GUI::MessageBox::Type::Error, GUI::MessageBox::InputType::OK, nullptr);
+        GUI::MessageBox::show(nullptr, "Could not open Welcome file.", "Welcome", GUI::MessageBox::Type::Error);
         return 1;
     }
     auto pages = _pages.value();
 
     auto window = GUI::Window::construct();
     window->set_title("Welcome");
-    Gfx::Rect window_rect { 0, 0, 640, 360 };
+    Gfx::IntRect window_rect { 0, 0, 640, 360 };
     window_rect.center_within(GUI::Desktop::the().rect());
     window->set_resizable(true);
     window->set_rect(window_rect);
@@ -214,10 +214,10 @@ int main(int argc, char** argv)
         title_box.set_size_policy(GUI::SizePolicy::Fill, GUI::SizePolicy::Fixed);
 
         if (!page.icon.is_empty()) {
-            auto& icon = title_box.add<GUI::Label>();
-            icon.set_icon(Gfx::Bitmap::load_from_file(page.icon));
+            auto& icon = title_box.add<GUI::ImageWidget>();
             icon.set_preferred_size(16, 16);
             icon.set_size_policy(GUI::SizePolicy::Fixed, GUI::SizePolicy::Fixed);
+            icon.load_from_file(page.icon);
         }
 
         auto& content_title = title_box.add<GUI::Label>();
@@ -248,7 +248,7 @@ int main(int argc, char** argv)
         if (first)
             menu_option.set_checked(true);
 
-        menu_option.on_click = [content = &content, &stack] {
+        menu_option.on_click = [content = &content, &stack](auto) {
             stack.set_active_widget(content);
             content->invalidate_layout();
         };
@@ -257,5 +257,5 @@ int main(int argc, char** argv)
     }
 
     window->show();
-    return app.exec();
+    return app->exec();
 }

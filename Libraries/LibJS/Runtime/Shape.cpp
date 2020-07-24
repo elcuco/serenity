@@ -25,13 +25,14 @@
  */
 
 #include <LibJS/Interpreter.h>
+#include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Shape.h>
 
 namespace JS {
 
 Shape* Shape::create_unique_clone() const
 {
-    auto* new_shape = heap().allocate<Shape>();
+    auto* new_shape = heap().allocate<Shape>(m_global_object, m_global_object);
     new_shape->m_unique = true;
     new_shape->m_prototype = m_prototype;
     ensure_property_table();
@@ -40,46 +41,49 @@ Shape* Shape::create_unique_clone() const
     return new_shape;
 }
 
-Shape* Shape::create_put_transition(const FlyString& property_name, u8 attributes)
+Shape* Shape::create_put_transition(const StringOrSymbol& property_name, PropertyAttributes attributes)
 {
     TransitionKey key { property_name, attributes };
     if (auto* existing_shape = m_forward_transitions.get(key).value_or(nullptr))
         return existing_shape;
-    auto* new_shape = heap().allocate<Shape>(this, property_name, attributes, TransitionType::Put);
+    auto* new_shape = heap().allocate<Shape>(m_global_object, *this, property_name, attributes, TransitionType::Put);
     m_forward_transitions.set(key, new_shape);
     return new_shape;
 }
 
-Shape* Shape::create_configure_transition(const FlyString& property_name, u8 attributes)
+Shape* Shape::create_configure_transition(const StringOrSymbol& property_name, PropertyAttributes attributes)
 {
     TransitionKey key { property_name, attributes };
     if (auto* existing_shape = m_forward_transitions.get(key).value_or(nullptr))
         return existing_shape;
-    auto* new_shape = heap().allocate<Shape>(this, property_name, attributes, TransitionType::Configure);
+    auto* new_shape = heap().allocate<Shape>(m_global_object, *this, property_name, attributes, TransitionType::Configure);
     m_forward_transitions.set(key, new_shape);
     return new_shape;
 }
 
 Shape* Shape::create_prototype_transition(Object* new_prototype)
 {
-    return heap().allocate<Shape>(this, new_prototype);
+    return heap().allocate<Shape>(m_global_object, *this, new_prototype);
 }
 
-Shape::Shape()
+Shape::Shape(GlobalObject& global_object)
+    : m_global_object(global_object)
 {
 }
 
-Shape::Shape(Shape* previous_shape, const FlyString& property_name, u8 attributes, TransitionType transition_type)
-    : m_previous(previous_shape)
+Shape::Shape(Shape& previous_shape, const StringOrSymbol& property_name, PropertyAttributes attributes, TransitionType transition_type)
+    : m_global_object(previous_shape.m_global_object)
+    , m_previous(&previous_shape)
     , m_property_name(property_name)
     , m_attributes(attributes)
-    , m_prototype(previous_shape->m_prototype)
+    , m_prototype(previous_shape.m_prototype)
     , m_transition_type(transition_type)
 {
 }
 
-Shape::Shape(Shape* previous_shape, Object* new_prototype)
-    : m_previous(previous_shape)
+Shape::Shape(Shape& previous_shape, Object* new_prototype)
+    : m_global_object(previous_shape.m_global_object)
+    , m_previous(&previous_shape)
     , m_prototype(new_prototype)
     , m_transition_type(TransitionType::Prototype)
 {
@@ -92,13 +96,19 @@ Shape::~Shape()
 void Shape::visit_children(Cell::Visitor& visitor)
 {
     Cell::visit_children(visitor);
+    visitor.visit(&m_global_object);
     visitor.visit(m_prototype);
     visitor.visit(m_previous);
+    m_property_name.visit_children(visitor);
     for (auto& it : m_forward_transitions)
         visitor.visit(it.value);
+
+    ensure_property_table();
+    for (auto& it : *m_property_table)
+        it.key.visit_children(visitor);
 }
 
-Optional<PropertyMetadata> Shape::lookup(const FlyString& property_name) const
+Optional<PropertyMetadata> Shape::lookup(const StringOrSymbol& property_name) const
 {
     auto property = property_table().get(property_name);
     if (!property.has_value())
@@ -106,7 +116,7 @@ Optional<PropertyMetadata> Shape::lookup(const FlyString& property_name) const
     return property;
 }
 
-const HashMap<FlyString, PropertyMetadata>& Shape::property_table() const
+const HashMap<StringOrSymbol, PropertyMetadata>& Shape::property_table() const
 {
     ensure_property_table();
     return *m_property_table;
@@ -133,7 +143,7 @@ void Shape::ensure_property_table() const
 {
     if (m_property_table)
         return;
-    m_property_table = make<HashMap<FlyString, PropertyMetadata>>();
+    m_property_table = make<HashMap<StringOrSymbol, PropertyMetadata>>();
 
     // FIXME: We need to make sure the GC doesn't collect the transition chain as we're building it.
     //        Maybe some kind of RAII "prevent GC for a moment" helper thingy?
@@ -146,7 +156,7 @@ void Shape::ensure_property_table() const
     u32 next_offset = 0;
     for (ssize_t i = transition_chain.size() - 1; i >= 0; --i) {
         auto* shape = transition_chain[i];
-        if (shape->m_property_name.is_null()) {
+        if (!shape->m_property_name.is_valid()) {
             // Ignore prototype transitions as they don't affect the key map.
             continue;
         }
@@ -160,7 +170,7 @@ void Shape::ensure_property_table() const
     }
 }
 
-void Shape::add_property_to_unique_shape(const FlyString& property_name, u8 attributes)
+void Shape::add_property_to_unique_shape(const StringOrSymbol& property_name, PropertyAttributes attributes)
 {
     ASSERT(is_unique());
     ASSERT(m_property_table);
@@ -168,7 +178,7 @@ void Shape::add_property_to_unique_shape(const FlyString& property_name, u8 attr
     m_property_table->set(property_name, { m_property_table->size(), attributes });
 }
 
-void Shape::reconfigure_property_in_unique_shape(const FlyString& property_name, u8 attributes)
+void Shape::reconfigure_property_in_unique_shape(const StringOrSymbol& property_name, PropertyAttributes attributes)
 {
     ASSERT(is_unique());
     ASSERT(m_property_table);
@@ -176,7 +186,7 @@ void Shape::reconfigure_property_in_unique_shape(const FlyString& property_name,
     m_property_table->set(property_name, { m_property_table->size(), attributes });
 }
 
-void Shape::remove_property_from_unique_shape(const FlyString& property_name, size_t offset)
+void Shape::remove_property_from_unique_shape(const StringOrSymbol& property_name, size_t offset)
 {
     ASSERT(is_unique());
     ASSERT(m_property_table);

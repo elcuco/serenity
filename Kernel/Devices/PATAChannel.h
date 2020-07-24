@@ -34,17 +34,19 @@
 // More information about the ATA spec for PATA can be found here:
 //      ftp://ftp.seagate.com/acrobat/reference/111-1c.pdf
 //
+
 #pragma once
 
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
+#include <Kernel/IO.h>
 #include <Kernel/Lock.h>
 #include <Kernel/PCI/Access.h>
 #include <Kernel/PCI/Device.h>
+#include <Kernel/PhysicalAddress.h>
+#include <Kernel/Random.h>
 #include <Kernel/VM/PhysicalPage.h>
 #include <Kernel/WaitQueue.h>
-#include <LibBareMetal/IO.h>
-#include <LibBareMetal/Memory/PhysicalAddress.h>
 
 namespace Kernel {
 
@@ -102,6 +104,7 @@ private:
     RefPtr<PhysicalPage> m_dma_buffer_page;
     IOAddress m_bus_master_base;
     Lockable<bool> m_dma_enabled;
+    EntropySource m_entropy_source;
 
     RefPtr<PATADiskDevice> m_master;
     RefPtr<PATADiskDevice> m_slave;

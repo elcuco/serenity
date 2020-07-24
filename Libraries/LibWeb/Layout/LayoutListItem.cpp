@@ -29,8 +29,8 @@
 
 namespace Web {
 
-LayoutListItem::LayoutListItem(const Element& element, NonnullRefPtr<StyleProperties> style)
-    : LayoutBlock(&element, move(style))
+LayoutListItem::LayoutListItem(Document& document, const Element& element, NonnullRefPtr<StyleProperties> style)
+    : LayoutBlock(document, &element, move(style))
 {
 }
 
@@ -38,24 +38,28 @@ LayoutListItem::~LayoutListItem()
 {
 }
 
-void LayoutListItem::layout()
+void LayoutListItem::layout(LayoutMode layout_mode)
 {
     if (m_marker) {
         remove_child(*m_marker);
         m_marker = nullptr;
     }
 
-    LayoutBlock::layout();
+    LayoutBlock::layout(layout_mode);
+
+    if (specified_style().string_or_fallback(CSS::PropertyID::ListStyleType, "disc") == "none") {
+        return;
+    }
 
     if (!m_marker) {
-        m_marker = adopt(*new LayoutListItemMarker);
+        m_marker = adopt(*new LayoutListItemMarker(document()));
         if (first_child())
             m_marker->set_inline(first_child()->is_inline());
         append_child(*m_marker);
     }
 
-    Gfx::FloatRect marker_rect { x() - 8, y(), 4, height() };
-    m_marker->set_rect(marker_rect);
+    m_marker->set_offset(-8, 0);
+    m_marker->set_size(4, height());
 }
 
 }

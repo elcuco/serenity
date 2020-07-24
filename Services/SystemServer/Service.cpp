@@ -158,11 +158,28 @@ void Service::setup_notifier()
 
     m_socket_notifier = Core::Notifier::construct(m_socket_fd, Core::Notifier::Event::Read, this);
     m_socket_notifier->on_ready_to_read = [this] {
-        dbg() << "Ready to read on behalf of " << name();
+        handle_socket_connection();
+    };
+}
+
+void Service::handle_socket_connection()
+{
+#ifdef SERVICE_DEBUG
+    dbg() << "Ready to read on behalf of " << name();
+#endif
+    if (m_accept_socket_connections) {
+       int accepted_fd = accept(m_socket_fd, nullptr, nullptr);
+       if (accepted_fd < 0) {
+           perror("accept");
+           return;
+       }
+       spawn(accepted_fd);
+       close(accepted_fd);
+    } else {
         remove_child(*m_socket_notifier);
         m_socket_notifier = nullptr;
-        spawn();
-    };
+        spawn(m_socket_fd);
+    }
 }
 
 void Service::activate()
@@ -172,20 +189,22 @@ void Service::activate()
     if (m_lazy)
         setup_notifier();
     else
-        spawn();
+        spawn(m_socket_fd);
 }
 
-void Service::spawn()
+void Service::spawn(int socket_fd)
 {
+#ifdef SERVICE_DEBUG
     dbg() << "Spawning " << name();
+#endif
 
     m_run_timer.start();
-    m_pid = fork();
+    pid_t pid = fork();
 
-    if (m_pid < 0) {
+    if (pid < 0) {
         perror("fork");
-        ASSERT_NOT_REACHED();
-    } else if (m_pid == 0) {
+        dbg() << "Failed to spawn " << name() << ". Sucks, dude :(";
+    } else if (pid == 0) {
         // We are the child.
 
         if (!m_working_directory.is_null()) {
@@ -231,11 +250,12 @@ void Service::spawn()
             dup2(STDIN_FILENO, STDERR_FILENO);
         }
 
-        if (!m_socket_path.is_null()) {
-            ASSERT(m_socket_fd > 2);
-            dup2(m_socket_fd, 3);
+        if (socket_fd >= 0) {
+            ASSERT(!m_socket_path.is_null());
+            ASSERT(socket_fd > 2);
+            dup2(socket_fd, 3);
             // The new descriptor is !CLOEXEC here.
-            // This is true even if m_socket_fd == 3.
+            // This is true even if socket_fd == 3.
             setenv("SOCKET_TAKEOVER", "1", true);
         }
 
@@ -246,6 +266,9 @@ void Service::spawn()
             }
         }
 
+        for (String& env : m_environment)
+            putenv(const_cast<char*>(env.characters()));
+
         char* argv[m_extra_arguments.size() + 2];
         argv[0] = const_cast<char*>(m_executable_path.characters());
         for (size_t i = 0; i < m_extra_arguments.size(); i++)
@@ -255,15 +278,17 @@ void Service::spawn()
         rc = execv(argv[0], argv);
         perror("exec");
         ASSERT_NOT_REACHED();
-    } else {
+    } else if (!m_multi_instance) {
         // We are the parent.
-        s_service_map.set(m_pid, this);
+        m_pid = pid;
+        s_service_map.set(pid, this);
     }
 }
 
 void Service::did_exit(int exit_code)
 {
     ASSERT(m_pid > 0);
+    ASSERT(!m_multi_instance);
 
     dbg() << "Service " << name() << " has exited with exit code " << exit_code;
 
@@ -321,14 +346,26 @@ Service::Service(const Core::ConfigFile& config, const StringView& name)
     if (!m_user.is_null())
         resolve_user();
 
+    m_working_directory = config.read_entry(name, "WorkingDirectory");
+    m_environment = config.read_entry(name, "Environment").split(' ');
+    m_boot_modes = config.read_entry(name, "BootModes", "graphical").split(',');
+    m_multi_instance = config.read_bool_entry(name, "MultiInstance");
+    m_accept_socket_connections = config.read_bool_entry(name, "AcceptSocketConnections");
+
     m_socket_path = config.read_entry(name, "Socket");
-    if (!m_socket_path.is_null()) {
+
+    // Lazy requires Socket.
+    ASSERT(!m_lazy || !m_socket_path.is_null());
+    // AcceptSocketConnections always requires Socket, Lazy, and MultiInstance.
+    ASSERT(!m_accept_socket_connections || (!m_socket_path.is_null() && m_lazy && m_multi_instance));
+    // MultiInstance doesn't work with KeepAlive.
+    ASSERT(!m_multi_instance || !m_keep_alive);
+
+    if (!m_socket_path.is_null() && is_enabled()) {
         auto socket_permissions_string = config.read_entry(name, "SocketPermissions", "0600");
         m_socket_permissions = strtol(socket_permissions_string.characters(), nullptr, 8) & 04777;
         setup_socket();
     }
-
-    m_working_directory = config.read_entry(name, "WorkingDirectory");
 }
 
 void Service::save_to(JsonObject& json)
@@ -343,6 +380,16 @@ void Service::save_to(JsonObject& json)
     for (String& arg : m_extra_arguments)
         extra_args.append(arg);
     json.set("extra_arguments", move(extra_args));
+
+    JsonArray boot_modes;
+    for (String& mode : m_boot_modes)
+        boot_modes.append(mode);
+    json.set("boot_modes", boot_modes);
+
+    JsonArray environment;
+    for (String& env : m_environment)
+        boot_modes.append(env);
+    json.set("environment", environment);
     */
 
     json.set("stdio_file_path", m_stdio_file_path);
@@ -354,6 +401,8 @@ void Service::save_to(JsonObject& json)
     json.set("user", m_user);
     json.set("uid", m_uid);
     json.set("gid", m_gid);
+    json.set("multi_instance", m_multi_instance);
+    json.set("accept_socket_connections", m_accept_socket_connections);
 
     if (m_pid > 0)
         json.set("pid", m_pid);
@@ -362,4 +411,10 @@ void Service::save_to(JsonObject& json)
 
     json.set("restart_attempts", m_restart_attempts);
     json.set("working_directory", m_working_directory);
+}
+
+bool Service::is_enabled() const
+{
+    extern String g_boot_mode;
+    return m_boot_modes.contains_slow(g_boot_mode);
 }

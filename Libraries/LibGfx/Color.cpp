@@ -25,13 +25,13 @@
  */
 
 #include <AK/Assertions.h>
-#include <AK/BufferStream.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/SystemTheme.h>
 #include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +40,11 @@ namespace Gfx {
 
 Color::Color(NamedColor named)
 {
+    if (named == Transparent) {
+        m_value = 0;
+        return;
+    }
+
     struct {
         u8 r;
         u8 g;
@@ -139,22 +144,11 @@ static Optional<Color> parse_rgb_color(const StringView& string)
     if (parts.size() != 3)
         return {};
 
-    bool ok;
-    auto r = parts[0].to_int(ok);
-    if (!ok)
-        return {};
-    auto g = parts[1].to_int(ok);
-    if (!ok)
-        return {};
-    auto b = parts[2].to_int(ok);
-    if (!ok)
-        return {};
+    auto r = parts[0].to_uint().value_or(256);
+    auto g = parts[1].to_uint().value_or(256);
+    auto b = parts[2].to_uint().value_or(256);
 
-    if (r < 0 || r > 255)
-        return {};
-    if (g < 0 || g > 255)
-        return {};
-    if (b < 0 || b > 255)
+    if (r > 255 || g > 255 || b > 255)
         return {};
 
     return Color(r, g, b);
@@ -171,27 +165,14 @@ static Optional<Color> parse_rgba_color(const StringView& string)
     if (parts.size() != 4)
         return {};
 
-    bool ok;
-    auto r = parts[0].to_int(ok);
-    if (!ok)
-        return {};
-    auto g = parts[1].to_int(ok);
-    if (!ok)
-        return {};
-    auto b = parts[2].to_int(ok);
-    if (!ok)
-        return {};
+    auto r = parts[0].to_int().value_or(256);
+    auto g = parts[1].to_int().value_or(256);
+    auto b = parts[2].to_int().value_or(256);
 
     double alpha = strtod(parts[3].to_string().characters(), nullptr);
-    int a = alpha * 255;
+    unsigned a = alpha * 255;
 
-    if (r < 0 || r > 255)
-        return {};
-    if (g < 0 || g > 255)
-        return {};
-    if (b < 0 || b > 255)
-        return {};
-    if (a < 0 || a > 255)
+    if (r > 255 || g > 255 || b > 255 || a > 255)
         return {};
 
     return Color(r, g, b, a);
@@ -203,11 +184,16 @@ Optional<Color> Color::from_string(const StringView& string)
         return {};
 
     struct ColorAndWebName {
+        constexpr ColorAndWebName(RGBA32 c, const char* n)
+            : color(c)
+            , name(n)
+        {
+        }
         RGBA32 color;
-        const char* name;
+        StringView name;
     };
 
-    const ColorAndWebName web_colors[] = {
+    constexpr ColorAndWebName web_colors[] = {
         // CSS Level 1
         { 0x000000, "black" },
         { 0xc0c0c0, "silver" },
@@ -364,7 +350,7 @@ Optional<Color> Color::from_string(const StringView& string)
         { 0x000000, nullptr }
     };
 
-    for (size_t i = 0; web_colors[i].name; ++i) {
+    for (size_t i = 0; !web_colors[i].name.is_null(); ++i) {
         if (string == web_colors[i].name)
             return Color::from_rgb(web_colors[i].color);
     }
@@ -426,11 +412,17 @@ Optional<Color> Color::from_string(const StringView& string)
 
     return Color(r.value(), g.value(), b.value(), a.value());
 }
-}
 
 const LogStream& operator<<(const LogStream& stream, Color value)
 {
     return stream << value.to_string();
+}
+}
+
+bool IPC::encode(IPC::Encoder& encoder, const Color& color)
+{
+    encoder << color.value();
+    return true;
 }
 
 bool IPC::decode(IPC::Decoder& decoder, Color& color)

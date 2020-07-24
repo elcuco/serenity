@@ -127,11 +127,13 @@ bool Socket::common_connect(const struct sockaddr* addr, socklen_t addrlen)
         if (!m_connected) {
             m_connected = true;
             ensure_read_notifier();
+            if (m_notifier) {
+                m_notifier->remove_from_parent();
+                m_notifier = nullptr;
+            }
             if (on_connected)
                 on_connected();
         }
-        if (on_ready_to_write)
-            on_ready_to_write();
     };
     int rc = ::connect(fd(), addr, addrlen);
     if (rc < 0) {
@@ -179,7 +181,14 @@ bool Socket::send(const ByteBuffer& data)
 void Socket::did_update_fd(int fd)
 {
     if (fd < 0) {
-        m_read_notifier = nullptr;
+        if (m_read_notifier) {
+             m_read_notifier->remove_from_parent();
+             m_read_notifier = nullptr;
+        }
+        if (m_notifier) {
+            m_notifier->remove_from_parent();
+            m_notifier = nullptr;
+        }
         return;
     }
     if (m_connected) {
@@ -195,6 +204,8 @@ void Socket::ensure_read_notifier()
     ASSERT(m_connected);
     m_read_notifier = Notifier::construct(fd(), Notifier::Event::Read, this);
     m_read_notifier->on_ready_to_read = [this] {
+        if (!can_read())
+            return;
         if (on_ready_to_read)
             on_ready_to_read();
     };

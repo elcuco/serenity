@@ -35,11 +35,11 @@ class HTMLCanvasElement;
 
 class LayoutCanvas : public LayoutReplaced {
 public:
-    LayoutCanvas(const HTMLCanvasElement&, NonnullRefPtr<StyleProperties>);
+    LayoutCanvas(Document&, const HTMLCanvasElement&, NonnullRefPtr<StyleProperties>);
     virtual ~LayoutCanvas() override;
 
-    virtual void layout() override;
-    virtual void render(RenderingContext&) override;
+    virtual void layout(LayoutMode = LayoutMode::Default) override;
+    virtual void paint(PaintContext&, PaintPhase) override;
 
     const HTMLCanvasElement& node() const { return static_cast<const HTMLCanvasElement&>(LayoutReplaced::node()); }
 

@@ -32,12 +32,17 @@
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio shared_buffer accept proc exec rpath unix cpath fattr", nullptr) < 0) {
+    if (pledge("stdio shared_buffer accept proc exec rpath unix cpath fattr sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
-    GUI::Application app(argc, argv);
+    auto app = GUI::Application::construct(argc, argv);
+
+    signal(SIGCHLD, [](int signo) {
+        (void)signo;
+        wait(nullptr);
+    });
 
     if (pledge("stdio shared_buffer accept proc exec rpath", nullptr) < 0) {
         perror("pledge");
@@ -47,10 +52,5 @@ int main(int argc, char** argv)
     TaskbarWindow window;
     window.show();
 
-    signal(SIGCHLD, [](int signo) {
-        (void)signo;
-        wait(nullptr);
-    });
-
-    return app.exec();
+    return app->exec();
 }

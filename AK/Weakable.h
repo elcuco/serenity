@@ -44,8 +44,8 @@ class WeakLink : public RefCounted<WeakLink<T>> {
     friend class Weakable<T>;
 
 public:
-    T* ptr() { return static_cast<T*>(m_ptr); }
-    const T* ptr() const { return static_cast<const T*>(m_ptr); }
+    T* ptr() { return m_ptr; }
+    const T* ptr() const { return m_ptr; }
 
 private:
     explicit WeakLink(T& weakable)
@@ -71,6 +71,11 @@ protected:
 #ifdef WEAKABLE_DEBUG
         m_being_destroyed = true;
 #endif
+        revoke_weak_ptrs();
+    }
+
+    void revoke_weak_ptrs()
+    {
         if (m_link)
             m_link->m_ptr = nullptr;
     }

@@ -32,29 +32,33 @@
 namespace JS {
 
 class ErrorConstructor final : public NativeFunction {
+    JS_OBJECT(ErrorConstructor, NativeFunction);
+
 public:
-    ErrorConstructor();
+    explicit ErrorConstructor(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~ErrorConstructor() override;
 
     virtual Value call(Interpreter&) override;
-    virtual Value construct(Interpreter&) override;
+    virtual Value construct(Interpreter&, Function& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
-    virtual const char* class_name() const override { return "ErrorConstructor"; }
 };
 
 #define DECLARE_ERROR_SUBCLASS_CONSTRUCTOR(ClassName, snake_name, PrototypeName, ConstructorName) \
     class ConstructorName final : public NativeFunction {                                         \
+        JS_OBJECT(ConstructorName, NativeFunction);                                               \
+                                                                                                  \
     public:                                                                                       \
-        ConstructorName();                                                                        \
+        explicit ConstructorName(GlobalObject&);                                                  \
+        virtual void initialize(GlobalObject&) override;                            \
         virtual ~ConstructorName() override;                                                      \
         virtual Value call(Interpreter&) override;                                                \
-        virtual Value construct(Interpreter&) override;                                           \
+        virtual Value construct(Interpreter&, Function& new_target) override;                     \
                                                                                                   \
     private:                                                                                      \
         virtual bool has_constructor() const override { return true; }                            \
-        virtual const char* class_name() const override { return #ClassName "Constructor"; }      \
     };
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName) \

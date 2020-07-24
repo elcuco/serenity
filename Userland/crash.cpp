@@ -27,8 +27,8 @@
 
 #include <AK/Function.h>
 #include <AK/String.h>
-#include <Kernel/Syscall.h>
-#include <LibBareMetal/IO.h>
+#include <Kernel/API/Syscall.h>
+#include <Kernel/IO.h>
 #include <LibCore/ArgsParser.h>
 #include <stdio.h>
 #include <stdlib.h>

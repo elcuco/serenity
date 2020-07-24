@@ -31,15 +31,16 @@
 namespace JS {
 
 class BooleanPrototype final : public BooleanObject {
+    JS_OBJECT(BooleanPrototype, BooleanObject);
+
 public:
-    BooleanPrototype();
+    explicit BooleanPrototype(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~BooleanPrototype() override;
 
 private:
-    virtual const char* class_name() const override { return "BooleanPrototype"; }
-
-    static Value to_string(Interpreter&);
-    static Value value_of(Interpreter&);
+    JS_DECLARE_NATIVE_FUNCTION(to_string);
+    JS_DECLARE_NATIVE_FUNCTION(value_of);
 };
 
 }

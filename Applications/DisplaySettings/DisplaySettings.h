@@ -31,7 +31,7 @@
 #include <LibGUI/ComboBox.h>
 
 class DisplaySettingsWidget : public GUI::Widget {
-    C_OBJECT(MonitorWidget);
+    C_OBJECT(DisplaySettingsWidget);
 
 public:
     DisplaySettingsWidget();
@@ -47,7 +47,7 @@ private:
 
     Vector<String> m_wallpapers;
     Vector<String> m_modes;
-    Vector<Gfx::Size> m_resolutions;
+    Vector<Gfx::IntSize> m_resolutions;
 
     RefPtr<GUI::Widget> m_root_widget;
     RefPtr<MonitorWidget> m_monitor_widget;

@@ -33,110 +33,146 @@
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/PrimitiveString.h>
 #include <LibJS/Runtime/StringObject.h>
+#include <LibJS/Runtime/StringIterator.h>
 #include <LibJS/Runtime/StringPrototype.h>
 #include <LibJS/Runtime/Value.h>
 #include <string.h>
 
 namespace JS {
 
-static StringObject* string_object_from(Interpreter& interpreter)
+static StringObject* typed_this(Interpreter& interpreter, GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return nullptr;
     if (!this_object->is_string_object()) {
-        interpreter.throw_exception<TypeError>("Not a String object");
+        interpreter.throw_exception<TypeError>(ErrorType::NotA, "String");
         return nullptr;
     }
     return static_cast<StringObject*>(this_object);
 }
 
-static String string_from(Interpreter& interpreter)
+static String ak_string_from(Interpreter& interpreter, GlobalObject& global_object)
 {
-    auto* this_object = interpreter.this_value().to_object(interpreter.heap());
+    auto* this_object = interpreter.this_value(global_object).to_object(interpreter, global_object);
     if (!this_object)
         return {};
-    return Value(this_object).to_string();
+    return Value(this_object).to_string(interpreter);
 }
 
-StringPrototype::StringPrototype()
-    : StringObject(*js_string(interpreter(), String::empty()), *interpreter().global_object().object_prototype())
+StringPrototype::StringPrototype(GlobalObject& global_object)
+    : StringObject(*js_string(interpreter(), String::empty()), *global_object.object_prototype())
 {
+}
+
+void StringPrototype::initialize(GlobalObject& global_object)
+{
+    StringObject::initialize(global_object);
     u8 attr = Attribute::Writable | Attribute::Configurable;
 
-    put_native_property("length", length_getter, nullptr, 0);
-    put_native_function("charAt", char_at, 1, attr);
-    put_native_function("repeat", repeat, 1, attr);
-    put_native_function("startsWith", starts_with, 1, attr);
-    put_native_function("indexOf", index_of, 1, attr);
-    put_native_function("toLowerCase", to_lowercase, 0, attr);
-    put_native_function("toUpperCase", to_uppercase, 0, attr);
-    put_native_function("toString", to_string, 0, attr);
-    put_native_function("padStart", pad_start, 1, attr);
-    put_native_function("padEnd", pad_end, 1, attr);
-    put_native_function("trim", trim, 0, attr);
-    put_native_function("trimStart", trim_start, 0, attr);
-    put_native_function("trimEnd", trim_end, 0, attr);
-    put_native_function("concat", concat, 1, attr);
-    put_native_function("substring", substring, 2, attr);
-    put_native_function("includes", includes, 1, attr);
-    put_native_function("slice", slice, 2, attr);
-    put_native_function("lastIndexOf", last_index_of, 1, attr);
+    define_native_property("length", length_getter, nullptr, 0);
+    define_native_function("charAt", char_at, 1, attr);
+    define_native_function("charCodeAt", char_code_at, 1, attr);
+    define_native_function("repeat", repeat, 1, attr);
+    define_native_function("startsWith", starts_with, 1, attr);
+    define_native_function("indexOf", index_of, 1, attr);
+    define_native_function("toLowerCase", to_lowercase, 0, attr);
+    define_native_function("toUpperCase", to_uppercase, 0, attr);
+    define_native_function("toString", to_string, 0, attr);
+    define_native_function("padStart", pad_start, 1, attr);
+    define_native_function("padEnd", pad_end, 1, attr);
+    define_native_function("trim", trim, 0, attr);
+    define_native_function("trimStart", trim_start, 0, attr);
+    define_native_function("trimEnd", trim_end, 0, attr);
+    define_native_function("concat", concat, 1, attr);
+    define_native_function("substring", substring, 2, attr);
+    define_native_function("includes", includes, 1, attr);
+    define_native_function("slice", slice, 2, attr);
+    define_native_function("lastIndexOf", last_index_of, 1, attr);
+    define_native_function(global_object.interpreter().well_known_symbol_iterator(), symbol_iterator, 0, attr);
 }
 
 StringPrototype::~StringPrototype()
 {
 }
 
-Value StringPrototype::char_at(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::char_at)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     i32 index = 0;
-    if (interpreter.argument_count())
-        index = interpreter.argument(0).to_i32();
+    if (interpreter.argument_count()) {
+        index = interpreter.argument(0).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
     if (index < 0 || index >= static_cast<i32>(string.length()))
         return js_string(interpreter, String::empty());
+    // FIXME: This should return a character corresponding to the i'th UTF-16 code point.
     return js_string(interpreter, string.substring(index, 1));
 }
 
-Value StringPrototype::repeat(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::char_code_at)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
+    if (string.is_null())
+        return {};
+    i32 index = 0;
+    if (interpreter.argument_count()) {
+        index = interpreter.argument(0).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
+    }
+    if (index < 0 || index >= static_cast<i32>(string.length()))
+        return js_nan();
+    // FIXME: This should return the i'th UTF-16 code point.
+    return Value((i32)string[index]);
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::repeat)
+{
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     if (!interpreter.argument_count())
         return js_string(interpreter, String::empty());
-    auto count_value = interpreter.argument(0).to_number();
+    auto count_value = interpreter.argument(0).to_number(interpreter);
+    if (interpreter.exception())
+        return {};
     if (count_value.as_double() < 0)
-        return interpreter.throw_exception<RangeError>("repeat count must be a positive number");
+        return interpreter.throw_exception<RangeError>(ErrorType::StringRepeatCountMustBe, "positive");
     if (count_value.is_infinity())
-        return interpreter.throw_exception<RangeError>("repeat count must be a finite number");
-    auto count = count_value.to_i32();
+        return interpreter.throw_exception<RangeError>(ErrorType::StringRepeatCountMustBe, "finite");
+    auto count = count_value.to_size_t(interpreter);
+    if (interpreter.exception())
+        return {};
     StringBuilder builder;
-    for (i32 i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
         builder.append(string);
     return js_string(interpreter, builder.to_string());
 }
 
-Value StringPrototype::starts_with(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::starts_with)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     if (!interpreter.argument_count())
         return Value(false);
-    auto search_string = interpreter.argument(0).to_string();
-    auto search_string_length = static_cast<i32>(search_string.length());
-    i32 position = 0;
+    auto search_string = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    auto string_length = string.length();
+    auto search_string_length = search_string.length();
+    size_t start = 0;
     if (interpreter.argument_count() > 1) {
-        auto number = interpreter.argument(1).to_number();
+        auto number = interpreter.argument(1).to_number(interpreter);
+        if (interpreter.exception())
+            return {};
         if (!number.is_nan())
-            position = number.to_i32();
+            start = min(number.to_size_t(interpreter), string_length);
     }
-    auto string_length = static_cast<i32>(string.length());
-    auto start = min(max(position, 0), string_length);
     if (start + search_string_length > string_length)
         return Value(false);
     if (search_string_length == 0)
@@ -144,45 +180,44 @@ Value StringPrototype::starts_with(Interpreter& interpreter)
     return Value(string.substring(start, search_string_length) == search_string);
 }
 
-Value StringPrototype::index_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::index_of)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
-    Value needle_value = js_undefined();
-    if (interpreter.argument_count() >= 1)
-        needle_value = interpreter.argument(0);
-    auto needle = needle_value.to_string();
+    auto needle = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
     return Value((i32)string.index_of(needle).value_or(-1));
 }
 
-Value StringPrototype::to_lowercase(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_lowercase)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     return js_string(interpreter, string.to_lowercase());
 }
 
-Value StringPrototype::to_uppercase(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_uppercase)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     return js_string(interpreter, string.to_uppercase());
 }
 
-Value StringPrototype::length_getter(Interpreter& interpreter)
+JS_DEFINE_NATIVE_GETTER(StringPrototype::length_getter)
 {
-    auto* string_object = string_object_from(interpreter);
+    auto* string_object = typed_this(interpreter, global_object);
     if (!string_object)
         return {};
     return Value((i32)string_object->primitive_string().string().length());
 }
 
-Value StringPrototype::to_string(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::to_string)
 {
-    auto* string_object = string_object_from(interpreter);
+    auto* string_object = typed_this(interpreter, global_object);
     if (!string_object)
         return {};
     return js_string(interpreter, string_object->primitive_string().string());
@@ -195,19 +230,20 @@ enum class PadPlacement {
 
 static Value pad_string(Interpreter& interpreter, const String& string, PadPlacement placement)
 {
-    auto max_length_value = interpreter.argument(0).to_number();
-    if (max_length_value.is_nan() || max_length_value.is_undefined() || max_length_value.as_double() < 0)
-        return js_string(interpreter, string);
-
-    auto max_length = static_cast<size_t>(max_length_value.to_i32());
+    auto max_length = interpreter.argument(0).to_size_t(interpreter);
+    if (interpreter.exception())
+        return {};
     if (max_length <= string.length())
         return js_string(interpreter, string);
 
     String fill_string = " ";
-    if (!interpreter.argument(1).is_undefined())
-        fill_string = interpreter.argument(1).to_string();
-    if (fill_string.is_empty())
-        return js_string(interpreter, string);
+    if (!interpreter.argument(1).is_undefined()) {
+        fill_string = interpreter.argument(1).to_string(interpreter);
+        if (interpreter.exception())
+            return {};
+        if (fill_string.is_empty())
+            return js_string(interpreter, string);
+    }
 
     auto fill_length = max_length - string.length();
 
@@ -221,139 +257,91 @@ static Value pad_string(Interpreter& interpreter, const String& string, PadPlace
     return js_string(interpreter, String::format("%s%s", string.characters(), filler.characters()));
 }
 
-Value StringPrototype::pad_start(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::pad_start)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     return pad_string(interpreter, string, PadPlacement::Start);
 }
 
-Value StringPrototype::pad_end(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::pad_end)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     return pad_string(interpreter, string, PadPlacement::End);
 }
 
-enum class TrimMode {
-    Left,
-    Right,
-    Both
-};
-
-static Value trim_string(Interpreter& interpreter, const String& string, TrimMode mode)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim)
 {
-    size_t substring_start = 0;
-    size_t substring_length = string.length();
-
-    auto is_white_space_character = [](char character) -> bool {
-        return character == 0x9 || character == 0xa || character == 0xb || character == 0xc || character == 0xd || character == 0x20;
-    };
-
-    if (mode == TrimMode::Left || mode == TrimMode::Both) {
-        for (size_t i = 0; i < string.length(); ++i) {
-            if (!is_white_space_character(string[i])) {
-                substring_start = i;
-                substring_length -= substring_start;
-                break;
-            }
-        }
-    }
-
-    if (substring_length == 0)
-        return js_string(interpreter, "");
-
-    if (mode == TrimMode::Right || mode == TrimMode::Both) {
-        size_t count = 0;
-        for (size_t i = string.length() - 1; i > 0; --i) {
-            if (!is_white_space_character(string[i])) {
-                substring_length -= count;
-                break;
-            }
-            count++;
-        }
-    }
-
-    return js_string(interpreter, string.substring(substring_start, substring_length));
-}
-
-Value StringPrototype::trim(Interpreter& interpreter)
-{
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
-    return trim_string(interpreter, string, TrimMode::Both);
+    return js_string(interpreter, string.trim_whitespace(String::TrimMode::Both));
 }
 
-Value StringPrototype::trim_start(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim_start)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
-    return trim_string(interpreter, string, TrimMode::Left);
+    return js_string(interpreter, string.trim_whitespace(String::TrimMode::Left));
 }
 
-Value StringPrototype::trim_end(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::trim_end)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
-    return trim_string(interpreter, string, TrimMode::Right);
+    return js_string(interpreter, string.trim_whitespace(String::TrimMode::Right));
 }
 
-Value StringPrototype::concat(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::concat)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     StringBuilder builder;
     builder.append(string);
     for (size_t i = 0; i < interpreter.argument_count(); ++i) {
-        auto string_argument = interpreter.argument(i).to_string();
+        auto string_argument = interpreter.argument(i).to_string(interpreter);
+        if (interpreter.exception())
+            return {};
         builder.append(string_argument);
     }
     return js_string(interpreter, builder.to_string());
 }
 
-Value StringPrototype::substring(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::substring)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
     if (interpreter.argument_count() == 0)
         return js_string(interpreter, string);
 
-    i32 string_length = static_cast<i32>(string.length());
-    i32 index_start = interpreter.argument(0).to_number().to_i32();
-    i32 index_end = string_length;
-
-    if (index_start > string_length)
-        index_start = string_length;
-    else if (index_start < 0)
-        index_start = 0;
-
+    // FIXME: index_start and index_end should index a UTF-16 codepoint view of the string.
+    auto string_length = string.length();
+    auto index_start = min(interpreter.argument(0).to_size_t(interpreter), string_length);
+    if (interpreter.exception())
+        return {};
+    auto index_end = string_length;
     if (interpreter.argument_count() >= 2) {
-        index_end = interpreter.argument(1).to_number().to_i32();
-
-        if (index_end > string_length)
-            index_end = string_length;
-        else if (index_end < 0)
-            index_end = 0;
+        index_end = min(interpreter.argument(1).to_size_t(interpreter), string_length);
+        if (interpreter.exception())
+            return {};
     }
 
     if (index_start == index_end)
         return js_string(interpreter, String(""));
 
     if (index_start > index_end) {
-        if (interpreter.argument_count() == 1) {
+        if (interpreter.argument_count() == 1)
             return js_string(interpreter, String(""));
-        } else {
-            i32 temp_index_start = index_start;
-            index_start = index_end;
-            index_end = temp_index_start;
-        }
+        auto temp_index_start = index_start;
+        index_start = index_end;
+        index_end = temp_index_start;
     }
 
     auto part_length = index_end - index_start;
@@ -361,22 +349,23 @@ Value StringPrototype::substring(Interpreter& interpreter)
     return js_string(interpreter, string_part);
 }
 
-Value StringPrototype::includes(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::includes)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
-    auto search_string = interpreter.argument(0).to_string();
-    i32 position = 0;
+    auto search_string = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
 
+    // FIXME: position should index a UTF-16 codepoint view of the string.
+    size_t position = 0;
     if (interpreter.argument_count() >= 2) {
-        position = interpreter.argument(1).to_i32();
-
-        if (position >= static_cast<i32>(string.length()))
+        position = interpreter.argument(1).to_size_t(interpreter);
+        if (interpreter.exception())
+            return {};
+        if (position >= string.length())
             return Value(false);
-
-        if (position < 0)
-            position = 0;
     }
 
     if (position == 0)
@@ -387,18 +376,21 @@ Value StringPrototype::includes(Interpreter& interpreter)
     return Value(substring_search.contains(search_string));
 }
 
-Value StringPrototype::slice(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::slice)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
 
     if (interpreter.argument_count() == 0)
         return js_string(interpreter, string);
 
-    i32 string_length = static_cast<i32>(string.length());
-    i32 index_start = interpreter.argument(0).to_i32();
-    i32 index_end = string_length;
+    // FIXME: index_start and index_end should index a UTF-16 codepoint view of the string.
+    auto string_length = static_cast<i32>(string.length());
+    auto index_start = interpreter.argument(0).to_i32(interpreter);
+    if (interpreter.exception())
+        return {};
+    auto index_end = string_length;
 
     auto negative_min_index = -(string_length - 1);
     if (index_start < negative_min_index)
@@ -407,7 +399,9 @@ Value StringPrototype::slice(Interpreter& interpreter)
         index_start = string_length + index_start;
 
     if (interpreter.argument_count() >= 2) {
-        index_end = interpreter.argument(1).to_i32();
+        index_end = interpreter.argument(1).to_i32(interpreter);
+        if (interpreter.exception())
+            return {};
 
         if (index_end < negative_min_index)
             return js_string(interpreter, String::empty());
@@ -426,37 +420,48 @@ Value StringPrototype::slice(Interpreter& interpreter)
     return js_string(interpreter, string_part);
 }
 
-Value StringPrototype::last_index_of(Interpreter& interpreter)
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::last_index_of)
 {
-    auto string = string_from(interpreter);
+    auto string = ak_string_from(interpreter, global_object);
     if (string.is_null())
         return {};
 
     if (interpreter.argument_count() == 0)
         return Value(-1);
 
-    auto search_string = interpreter.argument(0).to_string();
+    auto search_string = interpreter.argument(0).to_string(interpreter);
+    if (interpreter.exception())
+        return {};
     if (search_string.length() > string.length())
         return Value(-1);
-
-    ssize_t max_index = string.length() - search_string.length();
-    ssize_t from_index = max_index;
+    auto max_index = string.length() - search_string.length();
+    auto from_index = max_index;
     if (interpreter.argument_count() >= 2) {
-        from_index = static_cast<ssize_t>(interpreter.argument(1).to_i32());
-
-        if (from_index < 0)
-            from_index = 0;
-        if (from_index > max_index)
-            from_index = max_index;
+        // FIXME: from_index should index a UTF-16 codepoint view of the string.
+        from_index = min(interpreter.argument(1).to_size_t(interpreter), max_index);
+        if (interpreter.exception())
+            return {};
     }
 
-    for (ssize_t i = from_index; i >= 0; --i) {
+    for (i32 i = from_index; i >= 0; --i) {
         auto part_view = string.substring_view(i, search_string.length());
         if (part_view == search_string)
-            return Value((i32)i);
+            return Value(i);
     }
 
     return Value(-1);
+}
+
+JS_DEFINE_NATIVE_FUNCTION(StringPrototype::symbol_iterator)
+{
+    auto this_object = interpreter.this_value(global_object);
+    if (this_object.is_undefined() || this_object.is_null())
+        return interpreter.throw_exception<TypeError>(ErrorType::ToObjectNullOrUndef);
+
+    auto string = this_object.to_string(interpreter);
+    if (interpreter.exception())
+        return {};
+    return StringIterator::create(global_object, string);
 }
 
 }

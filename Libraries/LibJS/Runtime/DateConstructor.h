@@ -31,18 +31,20 @@
 namespace JS {
 
 class DateConstructor final : public NativeFunction {
+    JS_OBJECT(DateConstructor, NativeFunction);
+
 public:
-    DateConstructor();
+    explicit DateConstructor(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~DateConstructor() override;
 
     virtual Value call(Interpreter&) override;
-    virtual Value construct(Interpreter&) override;
+    virtual Value construct(Interpreter&, Function& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
-    virtual const char* class_name() const override { return "DateConstructor"; }
 
-    static Value now(Interpreter&);
+    JS_DECLARE_NATIVE_FUNCTION(now);
 };
 
 }

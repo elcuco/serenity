@@ -28,23 +28,22 @@
 
 #include <LibJS/Runtime/Object.h>
 
-namespace Web {
-namespace Bindings {
+namespace Web::Bindings {
 
 class XMLHttpRequestPrototype final : public JS::Object {
+    JS_OBJECT(XMLHttpRequestPrototype, JS::Object);
+
 public:
-    XMLHttpRequestPrototype();
+    explicit XMLHttpRequestPrototype(JS::GlobalObject&);
+    virtual void initialize(JS::GlobalObject&) override;
     virtual ~XMLHttpRequestPrototype() override;
 
 private:
-    virtual const char* class_name() const override { return "XMLHttpRequestPrototype"; }
+    JS_DECLARE_NATIVE_FUNCTION(open);
+    JS_DECLARE_NATIVE_FUNCTION(send);
 
-    static JS::Value open(JS::Interpreter&);
-    static JS::Value send(JS::Interpreter&);
-
-    static JS::Value ready_state_getter(JS::Interpreter&);
-    static JS::Value response_text_getter(JS::Interpreter&);
+    JS_DECLARE_NATIVE_GETTER(ready_state_getter);
+    JS_DECLARE_NATIVE_GETTER(response_text_getter);
 };
 
-}
 }

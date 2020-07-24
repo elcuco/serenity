@@ -58,14 +58,17 @@ public:
     bool is_checked() const { return m_checked; }
     void set_checked(bool);
 
+    bool is_default() const { return m_default; }
+    void set_default(bool);
+
     String text() const { return m_text; }
     void set_text(const String& text) { m_text = text; }
 
     String shortcut_text() const { return m_shortcut_text; }
     void set_shortcut_text(const String& text) { m_shortcut_text = text; }
 
-    void set_rect(const Gfx::Rect& rect) { m_rect = rect; }
-    Gfx::Rect rect() const;
+    void set_rect(const Gfx::IntRect& rect) { m_rect = rect; }
+    Gfx::IntRect rect() const;
 
     unsigned identifier() const { return m_identifier; }
 
@@ -77,6 +80,7 @@ public:
     void set_submenu_id(int submenu_id) { m_submenu_id = submenu_id; }
 
     Menu* submenu();
+    const Menu* submenu() const;
 
     bool is_exclusive() const { return m_exclusive; }
     void set_exclusive(bool exclusive) { m_exclusive = exclusive; }
@@ -87,10 +91,11 @@ private:
     bool m_enabled { true };
     bool m_checkable { false };
     bool m_checked { false };
+    bool m_default { false };
     unsigned m_identifier { 0 };
     String m_text;
     String m_shortcut_text;
-    Gfx::Rect m_rect;
+    Gfx::IntRect m_rect;
     RefPtr<Gfx::Bitmap> m_icon;
     int m_submenu_id { -1 };
     bool m_exclusive { false };

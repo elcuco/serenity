@@ -31,19 +31,21 @@
 namespace JS {
 
 class ArrayConstructor final : public NativeFunction {
+    JS_OBJECT(ArrayConstructor, NativeFunction);
+
 public:
-    ArrayConstructor();
+    explicit ArrayConstructor(GlobalObject&);
+    virtual void initialize(GlobalObject&) override;
     virtual ~ArrayConstructor() override;
 
     virtual Value call(Interpreter&) override;
-    virtual Value construct(Interpreter&) override;
+    virtual Value construct(Interpreter&, Function& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
-    virtual const char* class_name() const override { return "ArrayConstructor"; }
 
-    static Value is_array(Interpreter&);
-    static Value of(Interpreter&);
+    JS_DECLARE_NATIVE_FUNCTION(is_array);
+    JS_DECLARE_NATIVE_FUNCTION(of);
 };
 
 }
