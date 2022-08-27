@@ -10,7 +10,13 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+
+#ifndef AK_OS_WINDOWS
 #include <sys/select.h>
+#else
+#include <winsock2.h>
+#endif
+
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>

@@ -10,7 +10,12 @@
 #include <LibCore/Process.h>
 #include <LibCore/System.h>
 #include <errno.h>
+
+#ifndef AK_OS_WINDOWS
 #include <spawn.h>
+#else
+#include <process.h>
+#endif
 
 #ifdef __serenity__
 #    include <serenity.h>

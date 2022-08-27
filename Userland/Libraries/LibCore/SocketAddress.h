@@ -8,11 +8,14 @@
 #pragma once
 
 #include <AK/IPv4Address.h>
+#include <string.h>
+
+#ifndef AK_OS_WINDOWS
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#endif
 
 namespace Core {
 
@@ -63,6 +66,7 @@ public:
         }
     }
 
+#ifndef AK_OS_WINDOWS
     Optional<sockaddr_un> to_sockaddr_un() const
     {
         VERIFY(type() == Type::Local);
@@ -83,6 +87,7 @@ public:
         address.sin_port = htons(m_port);
         return address;
     }
+#endif
 
 private:
     Type m_type { Type::Invalid };

@@ -20,7 +20,6 @@
 #include <LibCore/Notifier.h>
 #include <LibCore/SocketAddress.h>
 #include <errno.h>
-#include <netdb.h>
 
 namespace Core::Stream {
 

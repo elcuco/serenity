@@ -279,7 +279,11 @@ ErrorOr<String> File::read_link(String const& link_path)
     errno = EAGAIN;
     return Error::from_errno(errno);
 }
-
+#elif defined(_WIN32)
+ErrorOr<String> File::read_link(String const&)
+{
+    return Error::from_errno(ERROR_API_UNAVAILABLE);
+}
 #else
 
 // This is a sad version for other systems. It has to always make a copy of the

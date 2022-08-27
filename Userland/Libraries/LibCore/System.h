@@ -12,21 +12,26 @@
 #include <AK/StringView.h>
 #include <dirent.h>
 #include <fcntl.h>
-#include <grp.h>
-#include <pwd.h>
 #include <signal.h>
-#include <spawn.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
-#include <sys/utsname.h>
-#include <sys/wait.h>
-#include <termios.h>
 #include <time.h>
 #include <utime.h>
 
-#if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID)
+#ifndef AK_OS_WINDOWS
+#include <pwd.h>
+#include <grp.h>
+#include <spawn.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+#include <termios.h>
+#else
+#include <WS2tcpip.h>
+#endif
+
+#if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID) && !defined(AK_OS_WINDOWS)
 #    include <shadow.h>
 #endif
 
@@ -83,12 +88,12 @@ ErrorOr<Optional<struct spwd>> getspent();
 ErrorOr<Optional<struct spwd>> getspnam(StringView name);
 #endif
 
-#ifndef AK_OS_MACOS
+#if !defined(AK_OS_MACOS) && !defined(AK_OS_WINDOWS)
 ErrorOr<int> accept4(int sockfd, struct sockaddr*, socklen_t*, int flags);
 #endif
 
 ErrorOr<void> sigaction(int signal, struct sigaction const* action, struct sigaction* old_action);
-#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__OpenBSD__) || defined(__FreeBSD__) || defined(AK_OS_WINDOWS)
 ErrorOr<sig_t> signal(int signal, sig_t handler);
 #else
 ErrorOr<sighandler_t> signal(int signal, sighandler_t handler);

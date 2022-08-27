@@ -7,6 +7,10 @@
 #include <AK/MemoryStream.h>
 #include <LibCore/SOCKSProxyClient.h>
 
+#ifdef AK_OS_WINDOWS
+#include <winsock2.h>
+#endif
+
 enum class Method : u8 {
     NoAuth = 0x00,
     GSSAPI = 0x01,

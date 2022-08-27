@@ -35,6 +35,9 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #    define AK_OS_WINDOWS
+// On windows, we need some posix functions to be emulated
+// or even stubbed.
+#   include <LibCore/win32/PosixEmulation.h>
 #endif
 
 // FIXME: Remove clang-format suppression after https://github.com/llvm/llvm-project/issues/56602 resolved
