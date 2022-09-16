@@ -19,7 +19,9 @@
 #include <errno.h>
 
 #ifndef SOCK_NONBLOCK
+#if !defined(AK_OS_WINDOWS)
 #    include <sys/ioctl.h>
+#endif
 #endif
 
 namespace TLS {
