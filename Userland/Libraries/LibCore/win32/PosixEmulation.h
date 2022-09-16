@@ -31,9 +31,6 @@ typedef int gid_t;
 
 #define suseconds_t long
 
-// I know this is ugly, but this is the best we can do for now
-#define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC
-
 #ifndef _POSIX_THREAD_SAFE_FUNCTIONS
 // I have no idea this this guard is not enabled on my build
 __forceinline struct tm *__CRTDECL localtime_r(const time_t *_Time, struct tm *_Tm) {
