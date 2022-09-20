@@ -179,7 +179,10 @@ timespec Time::to_timespec() const
 timeval Time::to_timeval() const
 {
     VERIFY(m_nanoseconds < 1'000'000'000);
-    return { static_cast<time_t>(m_seconds), static_cast<suseconds_t>(m_nanoseconds) / 1000 };
+    // Thanks, Windows/WinSock
+    using sec_type = decltype(declval<timeval>().tv_sec);
+    using usec_type = decltype(declval<timeval>().tv_usec);
+    return { static_cast<sec_type>(m_seconds), static_cast<usec_type>(m_nanoseconds) / 1000 };
 }
 
 Time Time::operator+(Time const& other) const
