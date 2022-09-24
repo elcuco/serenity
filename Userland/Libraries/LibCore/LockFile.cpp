@@ -11,6 +11,11 @@
 #include <sys/file.h>
 #include <unistd.h>
 
+#include <windows.h>
+//#include <winnt.h>
+
+#define LK_LEN      ULONG_MAX
+
 namespace Core {
 
 LockFile::LockFile(char const* filename, Type type)
@@ -25,11 +30,17 @@ LockFile::LockFile(char const* filename, Type type)
         return;
     }
 
+#if !defined(AK_OS_WINDOWS)
     if (flock(m_fd, LOCK_NB | ((type == Type::Exclusive) ? LOCK_EX : LOCK_SH)) == -1) {
         m_errno = errno;
         close(m_fd);
         m_fd = -1;
     }
+#else
+    HANDLE fh = (HANDLE) _get_osfhandle (m_fd);
+    OVERLAPPED o;
+    LockFileEx(fh, 0, 0, LK_LEN, LK_LEN, &o);
+#endif
 }
 
 LockFile::~LockFile()
@@ -48,7 +59,14 @@ void LockFile::release()
         return;
 
     unlink(m_filename);
+#if !defined(AK_OS_WINDOWS)
     flock(m_fd, LOCK_NB | LOCK_UN);
+#else
+    HANDLE fh = (HANDLE) _get_osfhandle (m_fd);
+    OVERLAPPED o;
+    UnlockFileEx(fh, 0, LK_LEN, LK_LEN, &o);
+#endif
+
     close(m_fd);
 
     m_fd = -1;
