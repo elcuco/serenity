@@ -35,6 +35,15 @@
 #    include <shadow.h>
 #endif
 
+#if defined(AK_OS_WINDOWS)
+
+#ifdef __MINGW32__
+#define _sig_func_ptr __p_sig_fn_t
+#endif
+
+typedef _sig_func_ptr sighandler_t;
+#endif
+
 namespace Core::System {
 
 #ifdef __serenity__

@@ -29,6 +29,8 @@ typedef int gid_t;
 #define sighandler_t __p_sig_fn_t
 #endif
 
+typedef void (*sig_t) (int);
+
 #define suseconds_t long
 
 #ifndef _POSIX_THREAD_SAFE_FUNCTIONS
