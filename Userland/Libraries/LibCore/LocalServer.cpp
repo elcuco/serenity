@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/Account.h>
 #include <LibCore/LocalServer.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Stream.h>
@@ -12,11 +11,17 @@
 #include <LibCore/SystemServerTakeover.h>
 #include <fcntl.h>
 #include <stdio.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#ifndef SOCK_NONBLOCK
+#if !defined(AK_OS_WINDOWS)
+#   include <LibCore/Account.h>
+#   include <sys/socket.h>
+#else
+// include winsock
+#endif
+
+#if !defined(SOCK_NONBLOCK) && !defined(AK_OS_WINDOWS)
 #    include <sys/ioctl.h>
 #endif
 
