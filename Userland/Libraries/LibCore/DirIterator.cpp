@@ -95,6 +95,10 @@ String DirIterator::next_full_path()
     return builder.to_string();
 }
 
+#if defined(AK_OS_WIN32)
+#    include <dirent.h>
+#endif
+
 int DirIterator::fd() const
 {
     if (!m_dir)
