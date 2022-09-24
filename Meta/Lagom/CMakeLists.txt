@@ -1,3 +1,4 @@
+
 cmake_minimum_required (VERSION 3.16)
 
 project(
@@ -266,19 +267,19 @@ if (ANDROID)
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/LocalServer.cpp")
 endif()
 if (WIN32)
+    # this list of files, will probably not be ported to lagom/win32
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/Account.cpp")
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/FilePermissionsMask.cpp")
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/Group.cpp")
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/GetPassword.cpp")
-endif()
-if (WIN32)
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/Account.cpp")
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/Group.cpp")
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/GetPassword.cpp")
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/AnonymousBuffer.cpp")
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/MappedFile.cpp")
     list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/Command.cpp")
-    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/EventLoop.cpp")
+
+    # this list of files, might be ported eventually to lagom/win32
+    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/ProcessStatisticsReader.cpp")
+
+    # we have a dedicated source file for win32
+    list(REMOVE_ITEM LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/StandardPaths.cpp")
+    list(APPEND LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/win32/StandardPaths.cpp")
 
     list(APPEND LIBCORE_SOURCES "${CMAKE_CURRENT_LIST_DIR}/../../Userland/Libraries/LibCore/win32/PosixEmulation.cpp")
 endif()
