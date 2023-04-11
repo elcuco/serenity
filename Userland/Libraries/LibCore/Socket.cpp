@@ -148,10 +148,10 @@ void PosixSocketHelper::close()
 
 ErrorOr<bool> PosixSocketHelper::can_read_without_blocking(int timeout) const
 {
-#if defined(AK_OS_WINDOWS)
-    struct pollfd the_fd = { .fd = static_cast<SOCKET>(m_fd), .events = POLLIN, .revents = 0 };
-#else
+#if !defined(AK_OS_WINDOWS)
     struct pollfd the_fd = { .fd = m_fd, .events = POLLIN, .revents = 0 };
+#else
+    struct pollfd the_fd = { .fd = static_cast<SOCKET>(m_fd), .events = POLLIN, .revents = 0 };
 #endif
 
     ErrorOr<int> result { 0 };
@@ -365,7 +365,11 @@ ErrorOr<void> LocalSocket::send_fd(int fd)
 #endif
 }
 
+#if !defined(AK_OS_WINDOWS)
 ErrorOr<pid_t> LocalSocket::peer_pid() const
+#else
+ErrorOr<DWORD> LocalSocket::peer_pid() const
+#endif
 {
 #ifdef AK_OS_MACOS
     pid_t pid;

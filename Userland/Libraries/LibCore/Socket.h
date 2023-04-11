@@ -85,8 +85,10 @@ protected:
     int default_flags() const
     {
         int flags = 0;
+#ifdef MSG_NOSIGNAL
         if (m_prevent_sigpipe)
             flags |= MSG_NOSIGNAL;
+#endif
         return flags;
     }
 
@@ -355,7 +357,11 @@ public:
 
     ErrorOr<int> receive_fd(int flags);
     ErrorOr<void> send_fd(int fd);
+#if !defined(AK_OS_WINDOWS)
     ErrorOr<pid_t> peer_pid() const;
+#else
+    ErrorOr<DWORD> peer_pid() const;
+#endif
     ErrorOr<Bytes> read_without_waiting(Bytes buffer);
 
     /// Release the fd associated with this LocalSocket. After the fd is
