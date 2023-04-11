@@ -83,6 +83,9 @@
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
+#    if defined(_MSC_VER)
+#        define AK_COMPILER_MSVC
+#    endif
 #    define AK_OS_WINDOWS
 #endif
 
@@ -197,10 +200,10 @@ extern "C" {
 #endif
 
 #if defined(AK_OS_WINDOWS)
-#    define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC
+#    define MSG_NOSIGNAL 0
 #endif
 
-#if defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_FREEBSD)
+#if defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_FREEBSD) || defined(AK_OS_WINDOWS)
 #    define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC
 #    define CLOCK_REALTIME_COARSE CLOCK_REALTIME
 #endif
