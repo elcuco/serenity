@@ -76,9 +76,7 @@ class Serenity:
             self.create_build_dir()
     
     def build_and_run_lagom_target(self, run_target: str):
-        lagom_target = ""
-        if len(self.args.args) != 0:
-            lagom_target = self.args.args[0]
+        lagom_target = self.args.args[0]
         cmd_args = []
         for arg in self.args.args[1:]:
             cmd_args.append(arg.replace(";", "\\;"))
