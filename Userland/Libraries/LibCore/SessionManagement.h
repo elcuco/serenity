@@ -15,8 +15,6 @@
 
 namespace Core::SessionManagement {
 #if !defined(AK_OS_WINDOWS)
-
-#if !defined(AK_OS_WINDOWS)
 ErrorOr<pid_t> root_session_id(Optional<pid_t> force_sid = {});
 ErrorOr<void> logout(Optional<pid_t> force_sid = {});
 

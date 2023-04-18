@@ -53,8 +53,6 @@ public:
     ErrorOr<void> for_each_entry(DirIterator::Flags, ForEachEntryCallback);
 #if !defined(AK_OS_WINDOWS)
     ErrorOr<void> chown(uid_t, gid_t);
-
-#if !defined(AK_OS_WINDOWS)
     static ErrorOr<Directory> adopt_fd(int fd, LexicalPath);
     static ErrorOr<bool> is_valid_directory(int fd);
 #else
