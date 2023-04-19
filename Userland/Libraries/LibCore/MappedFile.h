@@ -12,7 +12,10 @@
 #include <AK/NonnullRefPtr.h>
 #include <AK/RefCounted.h>
 #include <LibCore/Forward.h>
+
+#if defined(AK_OS_WINDOWS)
 #include <windows.h>
+#endif
 
 namespace Core {
 

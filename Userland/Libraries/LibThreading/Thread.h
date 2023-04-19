@@ -150,3 +150,5 @@ struct AK::Formatter<Threading::ThreadState> : AK::Formatter<FormatString> {
         return Formatter<FormatString>::format(builder, "{}"sv, name);
     }
 };
+
+}
