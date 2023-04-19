@@ -13,8 +13,8 @@
 #include <AK/RefPtr.h>
 #include <AK/Types.h>
 #include <LibIPC/Forward.h>
-#include <io.h>
 #if defined(AK_OS_WINDOWS)
+#    include <io.h>
 #    include <windows.h>
 #endif
 

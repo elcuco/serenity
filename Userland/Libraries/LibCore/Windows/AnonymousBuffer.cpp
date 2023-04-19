@@ -38,6 +38,12 @@ ErrorOr<AnonymousBuffer> AnonymousBuffer::create_with_size(size_t size)
 	return create_from_anon_handle(handle, size);
 }
 
+ErrorOr<AnonymousBuffer> AnonymousBuffer::create_from_anon_fd(int fd, size_t size)
+{
+    auto handle = _get_osfhandle(fd);
+    return AnonymousBuffer::create_from_anon_handle((HANDLE)handle, size);
+}
+
 ErrorOr<NonnullRefPtr<AnonymousBufferImpl>> AnonymousBufferImpl::create(HANDLE handle, size_t size)
 {
     auto* data = static_cast<void*>(::MapViewOfFile(

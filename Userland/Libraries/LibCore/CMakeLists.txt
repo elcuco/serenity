@@ -42,7 +42,6 @@ else()
 	list(APPEND SOURCES
 		Windows/AnonymousBuffer.cpp
 		Windows/System.cpp
-        Windows/Socket.cpp
 		Windows/DeprecatedFile.cpp	 
 	)
 endif()

@@ -62,6 +62,14 @@ ErrorOr<DeprecatedString> getcwd()
     free(cwd);
     return string_cwd;
 }
+
+ErrorOr<void> ioctl(int fd, unsigned request, ...)
+{
+    dbgln("ioctl: {}, {}, Not Supported", fd, request);
+    VERIFY_NOT_REACHED();
+    return {};
+}
+
 ErrorOr<void> link(StringView old_path, StringView new_path)
 {
     DeprecatedString old_path_string = old_path;
@@ -363,6 +371,12 @@ ErrorOr<String> mkdtemp(Span<char>)
 ErrorOr<int> mkstemp(Span<char>)
 {
     dbgln("mkstemp: Not Supported");
+    VERIFY_NOT_REACHED();
+}
+
+ErrorOr<int> poll(Span<struct pollfd>, int)
+{
+    dbgln("poll: Not Supported");
     VERIFY_NOT_REACHED();
 }
 

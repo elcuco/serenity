@@ -26,7 +26,11 @@
 #include <LibCore/System.h>
 #include <errno.h>
 #include <fcntl.h>
+
+#if !defined(AK_OS_WINDOWS)
 #include <sched.h>
+#include <sys/mman.h>
+#endif
 
 namespace Core {
 
